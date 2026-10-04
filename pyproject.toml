@@ -30,4 +30,5 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = [".", "scripts"]
 markers = ["data: needs downloaded datasets in data/ (run scripts/fetch_data.py)"]
