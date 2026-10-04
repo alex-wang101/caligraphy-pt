@@ -66,4 +66,5 @@ A shared stroke scrubber drives the panels. The page also has per-stroke metrics
 | `scripts/flip_check.py` | Checks the y-flip against bench references and writes `out/flip_check.png`. |
 | `scripts/bench_render.py` | Measures renderer throughput (stroke steps/s, characters/s, scoring masks). |
 | `scripts/convert_report.py` | Gives converter IoU over the full dataset (naive vs fixed variants), using every core, in about 10 minutes. |
+| `scripts/normalization_report.py` | Shows how the reward treats characters that are too small, too big, off-centre, squashed or rotated. Writes `out/normalization_<char>.png`. |
 | `scripts/make_splits.py` | Regenerates `splits/`. The splits are frozen and committed, so only rerun this deliberately. |

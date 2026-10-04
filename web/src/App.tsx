@@ -4,13 +4,6 @@ import { EnginePanel, ReferencePanel, Show, StrokesPanel } from "./components/Pa
 import { ScoreSummary, StrokeTable } from "./components/Scores";
 import { TaskList } from "./components/TaskList";
 
-const DRAWING_LABELS: Record<string, string> = {
-  converter: "Converter output (SFT label)",
-  A_small_corner: "Scene A: small, in a corner",
-  B_slid_component: "Scene B: component slid",
-  C_straight_flat: "Scene C: straight, flat pressure",
-};
-
 const IDS_NAMES: Record<string, string> = {
   "⿰": "left–right",
   "⿱": "top–bottom",
@@ -141,8 +134,8 @@ export default function App() {
                 Drawing
                 <select value={opts.drawing} onChange={(e) => setOpts({ ...opts, drawing: e.target.value })}>
                   {data.drawings.map((d) => (
-                    <option key={d} value={d}>
-                      {DRAWING_LABELS[d] ?? d}
+                    <option key={d.name} value={d.name}>
+                      {d.label}
                     </option>
                   ))}
                 </select>

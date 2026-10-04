@@ -16,6 +16,12 @@ export function ScoreSummary({ data }: { data: CharData }) {
       />
       <Stat label="Alignment" value={`s ${l.align_scale.toFixed(2)}`} hint={`t (${l.align_offset.map((v) => v.toFixed(0)).join(", ")})`} />
       <Stat label="Strokes" value={`${l.n_agent} / ${l.n_target}`} hint={`scored in ${data.score_ms.toFixed(0)} ms`} />
+      <Stat
+        label="Clamped points"
+        value={String(data.clamped_points)}
+        hint="points past the canvas edge, pinned to it"
+        flag={data.clamped_points > 0}
+      />
     </div>
   );
 }

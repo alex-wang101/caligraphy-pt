@@ -21,5 +21,15 @@ def compute_reward(response: str, entry: CharacterEntry, config: CanvasConfig | 
         return 0.0, {"parse_ok": False, "error": str(e), "n_agent": 0, "n_target": entry.n_strokes}
     canvas = render_response(strokes, config)
     score = score_character([(s.points, s.width) for s in canvas.strokes], entry, brush=config.brush)
-    info = {"parse_ok": True, **score.to_dict()}
+    info = {"parse_ok": True, **score.to_dict(), "clamped_points": count_clamped(strokes, config)}
     return score.structure, info
+
+
+def count_clamped(strokes: list[dict], config: CanvasConfig) -> int:
+    """Points outside [0, action_frame] that the canvas pinned to its edge.
+
+    Placement is measured after clamping, so a drawing far too big can still
+    look in-bounds there; this count is the tell.
+    """
+    f = config.action_frame
+    return sum(1 for s in strokes for x, y, _ in s["points"] if not (0 <= x <= f and 0 <= y <= f))

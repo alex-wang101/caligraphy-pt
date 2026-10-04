@@ -27,12 +27,13 @@ from calligraphy.data.types import CharacterEntry
 from calligraphy.render.brushes import get_brush
 from calligraphy.render.raster import render_geometries
 from calligraphy.score.levels import score_character
-from calligraphy.score.scenes import SCENES
+from calligraphy.score.scenes import SCENE_LABELS, SCENES, count_out_of_bounds, through_environment
 from calligraphy.score.stroke import stroke_metrics
 
 app = FastAPI(title="Calligraphy viewer")
 WEB_DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 DRAWINGS = ["converter", *[k for k in SCENES if k != "perfect"]]
+DRAWING_LABELS = {"converter": SCENE_LABELS["perfect"], **SCENE_LABELS}
 
 
 def resolve(key: str) -> CharacterEntry:
@@ -45,14 +46,19 @@ def resolve(key: str) -> CharacterEntry:
         raise HTTPException(404, f"unknown task or character {key!r}") from None
 
 
-@lru_cache(maxsize=256)
-def drawing(key: str, name: str) -> list[tuple[np.ndarray, float]]:
+def raw_drawing(key: str, name: str) -> list[tuple[np.ndarray, float]]:
     entry = resolve(key)
     if name == "converter":
         return SCENES["perfect"](entry)
     if name not in SCENES:
         raise HTTPException(400, f"unknown drawing {name!r}; choose from {DRAWINGS}")
     return SCENES[name](entry)
+
+
+@lru_cache(maxsize=256)
+def drawing(key: str, name: str) -> list[tuple[np.ndarray, float]]:
+    """The drawing as the environment scores it (parsed, validated, clamped to the canvas)."""
+    return through_environment(raw_drawing(key, name))
 
 
 def png(img) -> Response:
@@ -100,7 +106,8 @@ def char(key: str, drawing_name: str = Query("converter", alias="drawing"), brus
         "outlines": entry.strokes_d,
         "medians": [m.tolist() for m in entry.medians],
         "drawing": drawing_name,
-        "drawings": DRAWINGS,
+        "drawings": [{"name": d, "label": DRAWING_LABELS[d]} for d in DRAWINGS],
+        "clamped_points": count_out_of_bounds(raw_drawing(key, drawing_name)),
         "strokes": [{"points": p.round(2).tolist(), "width": round(w, 2)} for p, w in strokes],
         "stroke_metrics": per_stroke,
         "levels": levels.to_dict(),

@@ -1,14 +1,26 @@
-"""Synthetic drawings that each break exactly one scoring level (v2 section 3.3).
+"""Synthetic drawings for testing the scorer.
+
+- A, B, C each break exactly one scoring level (v2 section 3.3).
+- The normalization scenarios move, resize, squash or rotate an otherwise
+  perfect character, to show what the environment forgives and what it doesn't.
 
 All scenes start from the converter output, in canvas frame: [(points (N, 3), width), ...].
+`through_environment` runs a drawing through the same path as a model response
+(JSON -> parser -> Canvas clamping), so scores match what training would see.
 """
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+
 import numpy as np
 
+from calligraphy.canvas import CanvasConfig
 from calligraphy.convert import convert
 from calligraphy.data.types import CharacterEntry
+from calligraphy.frame import CANVAS
+from calligraphy.tools import format_strokes, parse_response, render_response
 
 Drawing = list[tuple[np.ndarray, float]]
 
@@ -54,9 +66,94 @@ def straight_flat(entry: CharacterEntry, pressure: float = 0.6) -> Drawing:
     return out
 
 
+def outline_center(entry: CharacterEntry) -> np.ndarray:
+    """Centre of the reference ink's bounding box."""
+    pts = np.vstack(entry.outlines)
+    return (pts.min(axis=0) + pts.max(axis=0)) / 2
+
+
+def transformed(
+    entry: CharacterEntry,
+    scale: float = 1.0,
+    sx: float | None = None,
+    sy: float | None = None,
+    dx: float = 0.0,
+    dy: float = 0.0,
+    rotate_deg: float = 0.0,
+) -> Drawing:
+    """The perfect drawing scaled (or squashed), rotated about its own centre, then shifted.
+
+    Widths scale with the geometric mean of the x and y factors.
+    """
+    ax, ay = sx if sx is not None else scale, sy if sy is not None else scale
+    c = outline_center(entry)
+    th = math.radians(rotate_deg)
+    rot = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
+    out = []
+    for pts, w in perfect(entry):
+        p = pts.copy()
+        p[:, :2] = ((p[:, :2] - c) * [ax, ay]) @ rot.T + c + [dx, dy]
+        out.append((p, w * math.sqrt(ax * ay)))
+    return out
+
+
+@dataclass(frozen=True)
+class Scenario:
+    label: str
+    kwargs: dict
+
+
+# Positions are in canvas units (the canvas is 1024 wide). Most characters fill
+# about 80% of the box, so a full-size character has little room to move.
+NORMALIZATION = {
+    "small_0.5": Scenario("Too small: 0.5x", {"scale": 0.5}),
+    "tiny_0.2": Scenario("Tiny: 0.2x", {"scale": 0.2}),
+    "big_1.15": Scenario("A bit big: 1.15x", {"scale": 1.15}),
+    "huge_1.6": Scenario("Too big: 1.6x, off canvas", {"scale": 1.6}),
+    "offcenter_inside": Scenario("Off-centre: 0.6x, right + down", {"scale": 0.6, "dx": 190, "dy": 170}),
+    "offcenter_corner": Scenario("Corner: 0.4x, top-left", {"scale": 0.4, "dx": -300, "dy": -300}),
+    "offcenter_off_canvas": Scenario("Past the edge: shifted right 250", {"dx": 250}),
+    "squash_x_0.6": Scenario("Squashed: 0.6x wide", {"sx": 0.6, "sy": 1.0}),
+    "rotate_8": Scenario("Rotated 8 degrees", {"rotate_deg": 8}),
+    "rotate_20": Scenario("Rotated 20 degrees", {"rotate_deg": 20}),
+}
+
+
+def scenario(name: str):
+    spec = NORMALIZATION[name]
+    return lambda entry: transformed(entry, **spec.kwargs)
+
+
 SCENES = {
     "perfect": perfect,
     "A_small_corner": small_in_corner,
     "B_slid_component": slid_component,
     "C_straight_flat": straight_flat,
+    **{name: scenario(name) for name in NORMALIZATION},
 }
+
+SCENE_LABELS = {
+    "perfect": "Converter output (SFT label)",
+    "A_small_corner": "Scene A: small, in a corner",
+    "B_slid_component": "Scene B: component slid",
+    "C_straight_flat": "Scene C: straight, flat pressure",
+    **{name: spec.label for name, spec in NORMALIZATION.items()},
+}
+
+
+def count_out_of_bounds(drawing: Drawing, frame: float = CANVAS) -> int:
+    """Points the canvas will clamp to its edge."""
+    return int(sum(((p[:, :2] < 0) | (p[:, :2] > frame)).any(axis=1).sum() for p, _ in drawing))
+
+
+def to_response(drawing: Drawing) -> str:
+    """The drawing as a model would write it: phase-1 JSON with integer coordinates."""
+    return format_strokes(
+        [{"points": [[round(x), round(y), round(q, 2)] for x, y, q in p.tolist()], "width": round(w, 1)} for p, w in drawing]
+    )
+
+
+def through_environment(drawing: Drawing, config: CanvasConfig | None = None) -> Drawing:
+    """What the environment actually scores: parsed, validated and clamped by the Canvas."""
+    canvas = render_response(parse_response(to_response(drawing), config), config)
+    return [(s.points, s.width) for s in canvas.strokes]

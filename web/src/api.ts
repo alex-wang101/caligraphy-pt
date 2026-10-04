@@ -44,7 +44,8 @@ export type CharData = {
   outlines: string[];
   medians: [number, number][][];
   drawing: string;
-  drawings: string[];
+  drawings: { name: string; label: string }[];
+  clamped_points: number;
   strokes: { points: [number, number, number][]; width: number }[];
   stroke_metrics: StrokeMetrics[];
   levels: Levels;
