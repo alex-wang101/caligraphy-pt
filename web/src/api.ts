@@ -148,10 +148,16 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
     } catch {
       /* not JSON */
     }
+    if (r.status === 404 && url.startsWith("/api/")) detail = STALE_SERVER;
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
+  // An API server started before this route existed answers with the page's HTML.
+  if (!(r.headers.get("content-type") ?? "").includes("application/json")) throw new Error(STALE_SERVER);
   return r.json() as Promise<T>;
 }
+
+const STALE_SERVER =
+  "The API server is running older code than this page. Restart it: press Ctrl+C in its terminal, then run `uv run uvicorn server.app:app --port 8000`.";
 
 const post = <T,>(url: string, body: unknown) =>
   json<T>(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

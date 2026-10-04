@@ -379,9 +379,17 @@ def cancel_run(run_id: str) -> dict:
     return {"ok": True}
 
 
-if WEB_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")
+def mount_frontend(target: FastAPI, dist: Path) -> None:
+    """Serve the built page from `dist`; every non-API path returns the page (client-side routing)."""
+    target.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
 
-    @app.get("/{path:path}", include_in_schema=False)
+    @target.get("/{path:path}", include_in_schema=False)
     def spa(path: str) -> FileResponse:
-        return FileResponse(WEB_DIST / "index.html")
+        # Unknown API routes must fail as JSON 404s, not fall through to the page.
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(404, f"no API route /{path}")
+        return FileResponse(dist / "index.html")
+
+
+if WEB_DIST.exists():
+    mount_frontend(app, WEB_DIST)

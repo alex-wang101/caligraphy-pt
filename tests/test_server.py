@@ -43,3 +43,21 @@ def test_images(client):
     assert ok.status_code == 200
     bad = client.post("/api/render", json={"strokes": [{"points": [[1, 2]], "width": 5}]})
     assert bad.status_code == 400
+
+
+def test_unknown_api_route_is_a_json_404_not_the_page(tmp_path):
+    """With a built frontend, the page catch-all must not swallow unknown /api/ routes."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.app import mount_frontend
+
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text("<!doctype html><title>viewer</title>")
+    app = FastAPI()
+    mount_frontend(app, tmp_path)
+    c = TestClient(app)
+    missing = c.get("/api/does-not-exist")
+    assert missing.status_code == 404
+    assert missing.headers["content-type"].startswith("application/json")
+    assert c.get("/some/page").text.startswith("<!doctype html>")
