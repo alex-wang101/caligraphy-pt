@@ -1,0 +1,20 @@
+{
+  "seed": 0,
+  "sizes": {
+    "train": 8692,
+    "val": 300,
+    "test_compositional": 500,
+    "viz16": 16,
+    "bench_excluded": 82
+  },
+  "criteria": {
+    "val": "uniform sample of 300 non-bench CJK unified ideographs (excluding 永)",
+    "test_compositional": "CJK unified ideograph; first-level IDS compound without ？; every component in >= 2 train characters; no train character with the same combination; not mentioned in any train decomposition",
+    "viz16": "val characters evenly spaced by stroke count"
+  },
+  "sources": {
+    "graphics.txt": "a28c478b5178e98f67f510b2d52fde08a69dc664654ef43498253b9b764d46ee",
+    "dictionary.txt": "744bb05d5b0742e9ee35c37791f94d56a173349b3367569e7ca11e510364d203",
+    "calligraphy-bench test.parquet": "32e5983a00607b880813c804ef663cb6d95a32f72dc131a8fa31a1637b6921d3"
+  }
+}
