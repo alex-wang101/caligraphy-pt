@@ -16,17 +16,16 @@ from PIL import Image, ImageDraw, ImageFont
 
 from calligraphy.data.mmah import get_entry
 from calligraphy.score.reward import compute_reward
-from calligraphy.score.scenes import NORMALIZATION, SCENE_LABELS, SCENES, count_out_of_bounds, to_response
+from calligraphy.score.scenes import NORMALIZATION_CHARS, NORMALIZATION_ORDER, SCENE_LABELS, SCENES, count_out_of_bounds, to_response
 from calligraphy.tools import parse_response, render_response
 
 OUT = Path(__file__).resolve().parents[1] / "out"
-ORDER = ["perfect", *NORMALIZATION, "A_small_corner"]
 
 
 def run(char: str) -> list[dict]:
     entry = get_entry(char)
     rows = []
-    for name in ORDER:
+    for name in NORMALIZATION_ORDER:
         drawing = SCENES[name](entry)
         text = to_response(drawing)
         reward, info = compute_reward(text, entry)
@@ -80,7 +79,7 @@ def contact_sheet(char: str, rows: list[dict], tile: int = 240) -> Image.Image:
 
 
 def main() -> None:
-    chars = sys.argv[1] if len(sys.argv) > 1 else "觀永国心"
+    chars = sys.argv[1] if len(sys.argv) > 1 else NORMALIZATION_CHARS
     OUT.mkdir(exist_ok=True)
     for char in chars:
         rows = run(char)

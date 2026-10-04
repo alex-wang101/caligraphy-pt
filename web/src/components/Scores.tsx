@@ -10,7 +10,7 @@ export function ScoreSummary({ data }: { data: CharData }) {
       <Stat label="Stroke shape" value={pct(l.shape)} hint="per-stroke scale + translation, IoU" />
       <Stat
         label="Placement"
-        value={`${l.placement_offset.toFixed(0)} · ${l.placement_ratio.toFixed(2)}×`}
+        value={l.placement_offset == null ? "–" : `${l.placement_offset.toFixed(0)} · ${l.placement_ratio.toFixed(2)}×`}
         hint="bbox centre offset · size ratio"
         flag={!l.placement_ok}
       />

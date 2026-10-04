@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, CharData, RenderOpts, Task } from "./api";
 import { EnginePanel, ReferencePanel, Show, StrokesPanel } from "./components/Panels";
+import { RunForm } from "./components/RunForm";
 import { ScoreSummary, StrokeTable } from "./components/Scores";
-import { TaskList } from "./components/TaskList";
+import { RewardPill, Sidebar, Source } from "./components/Sidebar";
 
 const IDS_NAMES: Record<string, string> = {
   "⿰": "left–right",
@@ -39,6 +40,15 @@ export default function App() {
   const [hovered, setHovered] = useState<number | null>(null);
   const [opts, setOpts] = useState<RenderOpts>({ drawing: "converter", brush: "disc", size: 512, grid: true });
   const [show, setShow] = useState<Show>({ outlines: false, medians: true, numbers: true, ghost: true, pixelated: false });
+  const [source, setSource] = useState<Source>("bench");
+  const [activeRun, setActiveRun] = useState<string | null>(null);
+  const [view, setView] = useState<"character" | "newRun">("character");
+
+  const select = (nextKey: string, drawing: string) => {
+    setKey(nextKey);
+    setOpts((o) => ({ ...o, drawing }));
+    setView("character");
+  };
 
   useEffect(() => {
     api.tasks().then(setTasks).catch((e) => setError(String(e)));
@@ -51,7 +61,7 @@ export default function App() {
       .char(key, opts.drawing, opts.brush)
       .then((d) => {
         setData(d);
-        setK(d.n_strokes);
+        setK(Math.max(d.n_strokes, d.strokes.length));
       })
       .catch((e) => setError(String(e)));
   }, [key, opts.drawing, opts.brush]);
@@ -62,7 +72,7 @@ export default function App() {
     for (let i = 0; i <= data.strokes.length; i++) new Image().src = api.renderUrl(data.key, i, opts);
   }, [data, opts]);
 
-  const n = data?.n_strokes ?? 0;
+  const n = data ? Math.max(data.n_strokes, data.strokes.length) : 0;
   const step = useCallback((d: number) => setK((v) => Math.max(0, Math.min(n, v + d))), [n]);
 
   useEffect(() => {
@@ -104,10 +114,28 @@ export default function App() {
 
   return (
     <div className="app">
-      <TaskList tasks={tasks} selected={key} onSelect={(k) => setKey(k)} />
+      <Sidebar
+        tasks={tasks}
+        source={source}
+        onSource={setSource}
+        selectedKey={key}
+        selectedDrawing={opts.drawing}
+        onSelect={select}
+        onNewRun={() => setView("newRun")}
+        activeRun={activeRun}
+        onActiveRun={setActiveRun}
+      />
       <main className="main">
-        {error && <div className="error">{error}</div>}
-        {data && (
+        {view === "newRun" && (
+          <RunForm
+            onStarted={(id) => {
+              setSource("runs");
+              setActiveRun(id);
+            }}
+          />
+        )}
+        {view === "character" && error && <div className="error">{error}</div>}
+        {view === "character" && data && (
           <>
             <header className="char-head">
               <div className="char-big">{data.character}</div>
@@ -128,6 +156,31 @@ export default function App() {
                 </div>
               </div>
             </header>
+
+            {data.rollout && (
+              <section className="answer">
+                <div className="answer-head">
+                  <span>
+                    Model answer · <b>{data.rollout.model}</b> · {data.rollout.latency_s.toFixed(1)} s
+                  </span>
+                  <RewardPill value={data.rollout.reward} />
+                </div>
+                {data.rollout.error ? (
+                  <div className="bad-text">{data.rollout.error}</div>
+                ) : (
+                  <div className="muted small">
+                    Parsed {data.strokes.length} strokes for a {data.n_strokes}-stroke character
+                    {data.rollout.stop_reason && data.rollout.stop_reason !== "stop" && data.rollout.stop_reason !== "end_turn"
+                      ? ` · stopped: ${data.rollout.stop_reason}`
+                      : ""}
+                  </div>
+                )}
+                <details>
+                  <summary>Raw response ({data.rollout.response.length.toLocaleString()} characters)</summary>
+                  <pre>{data.rollout.response || "(empty)"}</pre>
+                </details>
+              </section>
+            )}
 
             <div className="controls">
               <label>

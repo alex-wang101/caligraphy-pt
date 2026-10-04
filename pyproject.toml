@@ -14,8 +14,14 @@ dependencies = [
 
 [project.optional-dependencies]
 viewer = [
+    "anthropic>=1.0",
     "fastapi>=0.115",
+    "httpx>=0.27",
     "uvicorn>=0.30",
+]
+agent = [
+    "anthropic>=1.0",
+    "httpx>=0.27",
 ]
 
 [dependency-groups]

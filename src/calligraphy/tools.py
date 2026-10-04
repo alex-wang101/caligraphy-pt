@@ -92,9 +92,11 @@ def dispatch(canvas: Canvas, name: str, args: dict) -> ToolResult:
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+_THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def _extract_json(text: str):
+    text = _THINK.sub("", text)  # reasoning models (e.g. Qwen3) may think out loud before answering
     candidates = [m.group(1) for m in _FENCE.finditer(text)] + [text]
     for c in candidates:
         c = c.strip()

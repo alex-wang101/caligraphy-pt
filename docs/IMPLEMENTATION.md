@@ -193,18 +193,35 @@ When a child in the decomposition is an unnamed nested subtree, its leaves count
 ### 3.5 Viewer (`server/`, `web/`)
 - **FastAPI** (`server/app.py`). Characters are addressed by bench `task_id` or by the character itself.
   - `GET /api/tasks`, `/api/search?q=`
-  - `GET /api/char/{key}?drawing=&brush=` returns outlines, medians, strokes, per-stroke metrics and levels.
+  - `GET /api/char/{key}?drawing=&brush=` returns outlines, medians, strokes, per-stroke metrics, levels and, for a model answer, the rollout.
   - `GET /api/char/{key}/reference.jpg`
   - `GET /api/char/{key}/render.png?upto=&size=&brush=&grid=&drawing=`
-  - `POST /api/render` takes arbitrary phase-1 strokes. This is the hook for the rollout viewer.
-  - `drawing` is the converter output or one of the golden scenes A, B and C.
-- **React/Vite** (`web/`):
-  - a task list (bench 88, with MMAH search);
-  - three 米字格 panels: the 64 × 64 reference, the canonical strokes with order, direction and hover, and the engine render with optional contours and agent points;
-  - a shared stroke scrubber (arrow keys and space bar);
-  - score tiles and a per-stroke table (IoU, structure, shape, Fréchet, direction, inside, points, robust-fit inliers);
-  - a layout that works down to phone width.
-- **Verified in the browser pane:** 觀 scrubs through 25 strokes. Stroke 1 lands top-left and lifts at its bottom tip. Scene B shows structure 0.644 and shape 0.897. Search opens 永. There are no console errors.
+  - `POST /api/render` renders arbitrary phase-1 strokes.
+  - `GET /api/normalization` returns the 48 normalization cases with their rewards.
+  - `/api/agent/*` serves agent runs (section 3.6).
+  - A `drawing` is one of: the converter output, a scene, or a model answer (`run:<run_id>:<index>`). Every drawing is scored through the same parse-and-clamp path as the reward.
+- **React/Vite** (`web/`). A **Dataset** dropdown at the top of the sidebar switches between:
+  - **calligraphy-bench:** the 88 tasks, with filters and MMAH search;
+  - **Normalization tests:** 4 characters × 12 scenarios, filterable by character and kind (baseline, size, position, shape). Each case shows its reward;
+  - **Agent runs:** past runs with progress and mean reward, a **New run** form, and each run's answers.
+- **Main view:**
+  - three 米字格 panels: the 64 × 64 reference, the canonical strokes with order and direction, and the engine render with optional contours and agent points;
+  - a shared stroke scrubber;
+  - score tiles: structure, shape, placement, alignment, strokes, clamped points;
+  - a per-stroke table;
+  - for a model answer, a panel with the reward, parse status and raw response.
+- Works down to phone width.
+
+### 3.6 Agent runs (`agent/`, `scripts/run_agent.py`, `scripts/stub_model.py`)
+- **What a run does:** a model answers the phase-1 prompt (`phase1_messages`: the character's name only) for every character in a dataset, and each answer is scored with `compute_reward`. This is the zero-shot baseline from the training plan, and the same harness will evaluate trained checkpoints.
+- **Two backends** (`agent/client.py`):
+  - **OpenAI-compatible HTTP** (httpx): local Ollama, LM Studio, llama.cpp, vLLM (on a cloud GPU over an SSH tunnel), OpenAI, OpenRouter. If a hosted reasoning model rejects `max_tokens` or `temperature`, the request is retried with `max_completion_tokens` or without temperature.
+  - **Anthropic** through the official SDK. Credentials come from `ANTHROPIC_API_KEY` or an `ant auth login` profile. No temperature is sent (current models reject it), and the server-side refusal fallback (`fallbacks: "default"`) is on for the models that support it.
+- **Presets** (`agent/providers.py`): each carries its setup steps, which the viewer and `run_agent.py --list-providers` both show. `stub` (`scripts/stub_model.py`, port 8100) is a fake model that answers with the converter output; use it to test the pipeline (mean reward about 0.9).
+- **Keys:** a key is read from the preset's environment variable in the API server's process, or pasted in the UI. A pasted key lives only in memory for that run. It is never written to `out/runs/` and never returned by the API (`SecretStr`). The UI only shows whether the environment variable is set.
+- **Datasets:** bench (88, eval only), `viz16`, `val`, `test_compositional`, or custom characters, each with an optional limit and concurrency.
+- **Storage:** `out/runs/<run_id>/summary.json` (settings, progress, mean reward, parse rate, errors) and `rollouts.jsonl` (raw response, reward info, latency, usage). A run still marked running after a server restart shows as `interrupted`.
+- **Robustness:** errors never stop a run; each one becomes a zero-reward rollout. The parser skips `<think>…</think>` blocks, which local reasoning models emit.
 
 ## 4. Build order
 

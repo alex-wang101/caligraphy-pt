@@ -59,6 +59,30 @@ Open http://localhost:5173. The page shows each calligraphy-bench task in the �
 
 A shared stroke scrubber drives the panels. The page also has per-stroke metrics, and a drawing switcher that shows the scorer's golden scenes. Search finds any Make Me a Hanzi character. `.claude/launch.json` defines both servers.
 
+## Running a model on the dataset
+
+In the viewer, set **Dataset → Agent runs → New run**, pick a provider and follow its setup steps, then click **Test connection** and **Start run**. Each answer is scored with the training reward and opens in the panels.
+
+The providers are:
+- the scripted stub, which needs no model;
+- local Ollama, LM Studio or llama.cpp;
+- vLLM on a cloud GPU over an SSH tunnel;
+- OpenAI;
+- OpenRouter;
+- Anthropic.
+
+Keys come from the provider's environment variable in the API server's terminal, or can be pasted in the form. A pasted key is held in memory for the run only and is never saved. The same runner works from the command line:
+
+```bash
+uv run python scripts/run_agent.py --list-providers
+```
+
+```bash
+uv run python scripts/run_agent.py --provider ollama --model qwen3:8b --dataset bench --limit 10
+```
+
+To check the pipeline without a model, start the stub (`uv run python scripts/stub_model.py`) and use `--provider stub --model converter`.
+
 ## Scripts
 
 | Script | What it does |
@@ -67,4 +91,6 @@ A shared stroke scrubber drives the panels. The page also has per-stroke metrics
 | `scripts/bench_render.py` | Measures renderer throughput (stroke steps/s, characters/s, scoring masks). |
 | `scripts/convert_report.py` | Gives converter IoU over the full dataset (naive vs fixed variants), using every core, in about 10 minutes. |
 | `scripts/normalization_report.py` | Shows how the reward treats characters that are too small, too big, off-centre, squashed or rotated. Writes `out/normalization_<char>.png`. |
+| `scripts/run_agent.py` | Runs a model on a dataset from the command line (the same runner as the viewer). |
+| `scripts/stub_model.py` | A fake OpenAI-compatible model on port 8100 that answers with the converter output. |
 | `scripts/make_splits.py` | Regenerates `splits/`. The splits are frozen and committed, so only rerun this deliberately. |
