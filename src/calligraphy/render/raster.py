@@ -75,19 +75,70 @@ def render_polygons(polys: Iterable[np.ndarray], size: int, supersample: int = 2
 
 
 def rasterize_mask(
-    geoms: Iterable[StrokeGeometry] = (), polygons: Iterable[np.ndarray] = (), size: int = SCORE_SIZE
+    geoms: Iterable[StrokeGeometry] = (),
+    polygons: Iterable[np.ndarray] = (),
+    size: int = SCORE_SIZE,
+    window: tuple[int, int, int, int] | None = None,
 ) -> np.ndarray:
-    """Binary ink mask for scoring. Use for both agent ink and target outlines."""
-    img = Image.new("L", (size, size), 0)
+    """Binary ink mask for scoring. Use for both agent ink and target outlines.
+
+    `window` = (x0, y0, x1, y1) in pixels crops the raster (same pixel grid, just
+    fewer pixels), which makes per-stroke IoU cheap.
+    """
+    x0, y0, x1, y1 = window or (0, 0, size, size)
+    img = Image.new("L", (max(1, x1 - x0), max(1, y1 - y0)), 0)
     draw = ImageDraw.Draw(img)
     scale = size / CANVAS
+    offset = np.array([x0, y0]) / scale
     for g in geoms:
-        draw_geometry(draw, g, scale)
+        shifted = StrokeGeometry(
+            discs=g.discs - np.r_[offset, 0.0] if len(g.discs) else g.discs,
+            quads=g.quads - offset if len(g.quads) else g.quads,
+            polygons=tuple(p - offset for p in g.polygons),
+        )
+        draw_geometry(draw, shifted, scale)
     for p in polygons:
-        draw_polygon(draw, p, scale)
+        draw_polygon(draw, np.asarray(p) - offset, scale)
     return np.asarray(img) > 127
 
 
 def mask_iou(a: np.ndarray, b: np.ndarray) -> float:
     union = np.logical_or(a, b).sum()
     return float(np.logical_and(a, b).sum() / union) if union else 0.0
+
+
+def _pixel_window(bounds: list[tuple[float, float, float, float]], size: int) -> tuple[int, int, int, int]:
+    s = size / CANVAS
+    x0 = min(b[0] for b in bounds) * s
+    y0 = min(b[1] for b in bounds) * s
+    x1 = max(b[2] for b in bounds) * s
+    y1 = max(b[3] for b in bounds) * s
+    return int(np.floor(x0)) - 1, int(np.floor(y0)) - 1, int(np.ceil(x1)) + 2, int(np.ceil(y1)) + 2
+
+
+def ink_moments(
+    geoms: list[StrokeGeometry] = (), polygons: list[np.ndarray] = (), size: int = SCORE_SIZE
+) -> tuple[np.ndarray, float, float] | None:
+    """(centroid, RMS spread, area) of the ink in canvas units, or None if there is no ink."""
+    bounds = [g.bounds() for g in geoms if len(g.discs) or len(g.quads) or g.polygons]
+    bounds += [(p[:, 0].min(), p[:, 1].min(), p[:, 0].max(), p[:, 1].max()) for p in polygons if len(p)]
+    if not bounds:
+        return None
+    win = _pixel_window(bounds, size)
+    ys, xs = np.nonzero(rasterize_mask(geoms, polygons, size=size, window=win))
+    if len(xs) == 0:
+        return None
+    scale = CANVAS / size
+    pts = (np.column_stack([xs, ys]) + np.array(win[:2]) + 0.5) * scale
+    c = pts.mean(axis=0)
+    return c, float(np.sqrt(((pts - c) ** 2).sum(axis=1).mean())), len(xs) * scale**2
+
+
+def geometry_iou(geoms: list[StrokeGeometry], polygons: list[np.ndarray], size: int = SCORE_SIZE) -> float:
+    """IoU of agent ink vs target outlines, rasterized identically in a shared window."""
+    bounds = [g.bounds() for g in geoms if len(g.discs) or len(g.quads) or g.polygons]
+    bounds += [(p[:, 0].min(), p[:, 1].min(), p[:, 0].max(), p[:, 1].max()) for p in polygons if len(p)]
+    if not bounds:
+        return 0.0
+    win = _pixel_window(bounds, size)
+    return mask_iou(rasterize_mask(geoms, size=size, window=win), rasterize_mask(polygons=polygons, size=size, window=win))

@@ -72,22 +72,21 @@ def catmull_rom(points, spacing: float = 8.0, alpha: float = 0.5) -> np.ndarray:
 
     xy = p[:, :2]
     ext = np.vstack([2 * xy[0] - xy[1], xy, 2 * xy[-1] - xy[-2]])
-    out = [p[:1]]
-    for i in range(len(p) - 1):
-        p0, p1, p2, p3 = ext[i], ext[i + 1], ext[i + 2], ext[i + 3]
-        t0 = 0.0
-        t1 = t0 + max(np.linalg.norm(p1 - p0), 1e-6) ** alpha
-        t2 = t1 + max(np.linalg.norm(p2 - p1), 1e-6) ** alpha
-        t3 = t2 + max(np.linalg.norm(p3 - p2), 1e-6) ** alpha
-        n = max(1, int(np.ceil(np.linalg.norm(p2 - p1) / spacing)))
-        u = np.linspace(0.0, 1.0, n + 1)[1:]
-        t = (t1 + (t2 - t1) * u)[:, None]
-        a1 = (t1 - t) / (t1 - t0) * p0 + (t - t0) / (t1 - t0) * p1
-        a2 = (t2 - t) / (t2 - t1) * p1 + (t - t1) / (t2 - t1) * p2
-        a3 = (t3 - t) / (t3 - t2) * p2 + (t - t2) / (t3 - t2) * p3
-        b1 = (t2 - t) / (t2 - t0) * a1 + (t - t0) / (t2 - t0) * a2
-        b2 = (t3 - t) / (t3 - t1) * a2 + (t - t1) / (t3 - t1) * a3
-        c = (t2 - t) / (t2 - t1) * b1 + (t - t1) / (t2 - t1) * b2
-        extra = p[i, 2:] + (p[i + 1, 2:] - p[i, 2:]) * u[:, None]
-        out.append(np.hstack([c, extra]))
-    return np.vstack(out)
+    seg = np.linalg.norm(np.diff(ext, axis=0), axis=1)  # N + 1 knot gaps
+    knots = np.concatenate([[0.0], np.cumsum(np.maximum(seg, 1e-6) ** alpha)])
+    n_seg = len(p) - 1
+    counts = np.maximum(1, np.ceil(seg[1:-1] / spacing).astype(int))  # samples per real segment
+    i = np.repeat(np.arange(n_seg), counts)
+    u = np.concatenate([np.arange(1, c + 1) / c for c in counts])[:, None]
+
+    p0, p1, p2, p3 = ext[i], ext[i + 1], ext[i + 2], ext[i + 3]
+    t0, t1, t2, t3 = (knots[i + k][:, None] for k in range(4))
+    t = t1 + (t2 - t1) * u
+    a1 = (t1 - t) / (t1 - t0) * p0 + (t - t0) / (t1 - t0) * p1
+    a2 = (t2 - t) / (t2 - t1) * p1 + (t - t1) / (t2 - t1) * p2
+    a3 = (t3 - t) / (t3 - t2) * p2 + (t - t2) / (t3 - t2) * p3
+    b1 = (t2 - t) / (t2 - t0) * a1 + (t - t0) / (t2 - t0) * a2
+    b2 = (t3 - t) / (t3 - t1) * a2 + (t - t1) / (t3 - t1) * a3
+    c = (t2 - t) / (t2 - t1) * b1 + (t - t1) / (t2 - t1) * b2
+    extra = p[i, 2:] + (p[i + 1, 2:] - p[i, 2:]) * u
+    return np.vstack([p[:1], np.hstack([c, extra])])

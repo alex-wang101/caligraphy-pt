@@ -27,6 +27,7 @@ class CharacterEntry:
     meta: dict = field(default_factory=dict)  # pinyin, definition, decomposition, matches, ...
     task_id: str | None = None
     reference_jpeg: bytes | None = None
+    cache: dict = field(default_factory=dict, repr=False, compare=False)  # derived data (e.g. scorer moments)
 
     @property
     def n_strokes(self) -> int:

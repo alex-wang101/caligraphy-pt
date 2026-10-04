@@ -62,18 +62,42 @@ This is a compressed version of "Implementation Plan v2" with the concrete engin
   - `scripts/flip_check.py` writes `out/flip_check.png` (reference | raw | flipped) for a visual check. 觀 is upright.
 
 ### 3.2 SFT converter (`convert.py`): dataset → `create_stroke` calls
-1. Resample each median at **fixed spacing**, `spacing = 8`.
-2. **Centerline:** recentre each sample on the midpoint of the outline chord along the local normal, which is a local medial axis. v2 suggested skeletonizing; this approach avoids skeleton spurs. The fallback is skimage `medial_axis`.
-3. **End extension:** cast a ray along the end tangent out to the outline boundary. Trim endpoints that lie outside the outline.
+1. **Trim** median endpoints that lie outside the outline. Then resample at **fixed spacing**, `spacing = 8`.
+2. **Centerline:** recentre each sample on the midpoint of the outline chord along the local normal, which is a local medial axis. This runs for 2 iterations, with re-resampling.
+   - A move is accepted only if half the chord is at most 1.25 × the inscribed radius at the new point.
+   - At a corner, such as the turn of a 横折, the normal runs diagonally across the bend and the chord is far too long. Those samples stay where they are; moving them would cut the corner.
+   - The positions are not smoothed, because smoothing rounds corners.
+   - v2 suggested skeletonizing; this approach avoids skeleton spurs.
+3. **End extension:** cast a ray along the end tangent out to the outline boundary.
+   - The tangent is measured over the last ~24 units, so the small hooks that MMAH medians often have at their ends don't steer it sideways.
+   - Extension is capped at 100 units.
 4. Radius = the inscribed distance to the outline edge, multiplied by `radius_scale` (default 1.0). Samples outside the outline get 0.
-5. Take `r_max` as the largest radius in the **whole character**. Then `p = r / r_max` and `width = 2 · r_max`. For 觀, `width ≈ 88`.
-6. Downsample to **≤ 16 points**: Ramer–Douglas–Peucker over (x, y, r), raising epsilon until no more than 16 points remain. Endpoints are always kept. Then quantize: integer coordinates, `p` to 2 decimal places.
+5. Take `r_max` as the largest radius in the **whole character**. Then `p = r / r_max` and `width = 2 · r_max`. For 觀, `width ≈ 87`.
+6. **Downsample:** Ramer–Douglas–Peucker over (x, y, r) with `rdp_eps = 2.0` (canvas units), raised until no more than 16 points remain. Endpoints are always kept. Then quantize: integer coordinates, `p` to 2 decimal places.
+   - `rdp_eps` trades label fidelity against output length. Each point costs the model about 9 tokens.
+   - The remaining gap to dense samples comes from Catmull-Rom re-interpolation, not from the point budget.
 
-The `naive` preset reproduces v2's validation converter: 40 fixed points, no centerline, no extension.
+The `naive` preset reproduces v2's validation converter: 40 fixed points, no centerline, no extension. On 觀 it gives mean stroke IoU 0.88 with stroke 9 at 0.76, matching v2.
 
-**Report:** `scripts/convert_report.py` gives per-stroke and per-character IoU distributions over the full dataset, for naive and fixed, plus a `radius_scale` sweep (1.0, 1.05, 1.1). Fixed must beat naive on mean IoU. v2 reported 0.89 on 觀 for naive. This IoU measures label and brush quality only; it does not cap the agent.
+**Full-dataset report** (`scripts/convert_report.py`, 9,574 characters, 112,617 strokes; mask IoU at 512 px):
 
-**Known systematic errors:** strokes always come out slightly thin, and corners come out round. A later fix is an angled elliptical tip, for aesthetics only.
+| Variant | Stroke mean | Stroke p10 | Character mean | Points/stroke |
+|---|---|---|---|---|
+| naive (v2 validation) | 0.906 | 0.837 | 0.935 | 40.0 |
+| fixed spacing | 0.906 | 0.835 | 0.937 | 44.5 |
+| + end extension | 0.909 | 0.841 | 0.937 | 48.4 |
+| + centerline (dense) | **0.939** | 0.879 | **0.959** | 48.7 |
+| **default** (≤ 16 points, `rdp_eps` 2.0, quantized) | 0.922 | 0.854 | 0.941 | **9.8** |
+| high fidelity (`rdp_eps` 0.5) | 0.932 | 0.870 | 0.948 | 13.9 |
+| default, radius × 1.05 | 0.906 | 0.849 | 0.922 | 9.9 |
+| default, radius × 1.1 | 0.877 | 0.830 | 0.892 | 10.0 |
+
+- The default beats naive on mean IoU, and on character IoU for 84.7% of characters. ✓
+- The centerline is the fix that matters. End extension adds little.
+- Once strokes are recentred they are no longer systematically thin, so scaling the radius up hurts. Keep `radius_scale = 1.0`.
+- This IoU measures label and brush quality only; it does not cap the agent.
+
+**Known systematic error:** corners come out round, because a disc can't form the squared shoulder of a pressed-and-turned brush. A later fix is an angled elliptical tip, for aesthetics only.
 
 ### 3.3 Scorer (`score/`)
 - **Per-stroke metrics (`stroke.py`):**
@@ -87,25 +111,32 @@ The `naive` preset reproduces v2's validation converter: 40 fixed points, no cen
   - shifted by (+120, +80): inside 0, IoU 0;
   - width 60: much lower IoU, same Fréchet.
 - **Alignment (`align.py`):**
-  - Scale + translation (no rotation) in closed form, on index-matched point pairs: each agent stroke and the target median, both resampled to 32 points.
+  - Scale + translation (no rotation) on index-matched **per-stroke ink moments**: the centroid and RMS spread of each stroke's ink, measured on the same masks as IoU.
+  - Least squares over `s·c_a + t = c_t` and `s·spread_a = spread_t`.
+  - Why not path points: arc-length-paired path points were tried first and are biased. The converter's paths run to the stroke tips while the medians stop short, so the perfect drawing scored 0.86 on structure and 0.77 on shape instead of 0.90. Ink moments don't depend on parameterization.
   - **Robust version:** fit, keep the 60% of strokes with the lowest residual, refit, 3 iterations. Clamp `s` to [0.25, 4].
+  - **Per-stroke fit (shape level):** match the spread, then the centroid.
 - **Levels (`levels.py`):**
-  - **Placement:** the offset between the bounding-box centres and the size ratio, computed on the raw drawing.
+  - **Placement:** the offset between the ink bounding-box centres and the ratio of their longest sides, computed on the raw drawing. It is flagged when the offset is over 128 units (two cells of a 64-grid) or the ratio is outside [0.8, 1.25]. This is logged only and is not part of reward v1.
   - **Structure:** one robust transform for the whole character, then per-stroke IoU. Score = Σ IoU / max(n_agent, n_target).
   - **Stroke shape:** a separate transform per stroke, then IoU, with the same normalisation.
-- **Golden scenes (觀):**
+- **Golden scenes (觀),** with measured values:
 
-  | Scene | Expected |
-  |---|---|
-  | Perfect (converter output) | Placement OK; structure ≈ shape ≈ the converter's IoU. |
-  | A: small and in a corner | Only placement is flagged. |
-  | B: the 見 strokes slid left (strokes found through `dictionary.txt` `matches`) | Only structure is flagged. The unmoved strokes keep their IoU and the moved ones score about 0. |
-  | C: straight strokes with flat pressure | Shape is flagged. |
+  | Scene | Placement | Structure | Shape | Expected and v2 values |
+  |---|---|---|---|---|
+  | Perfect (converter output) | 2 · 0.99× | 0.899 | 0.897 | both ≈ the converter's IoU (0.90) ✓ |
+  | A: 0.6× scale, in a corner | **258 · 0.60×** | 0.893 | 0.904 | placement only ✓ |
+  | B: 見 slid 180 units left (strokes found through `dictionary.txt` `matches`) | 92 · 0.96× | **0.644** | 0.897 | structure only ✓ (v2: 93 offset, 0.64) |
+  | C: straight strokes, flat pressure | 15 · 1.00× | 0.433 | **0.618** | shape ✓ (v2: 0.49 / 0.63) |
+
+  - In scene B, the 18 unmoved strokes keep 0.78–0.94 and the 7 moved strokes score 0 (v2: 0.76–0.96 and about 0).
+  - Plain least squares on B drifts by (108, 11) and scores structure 0.04.
 
 - **Reward v1 (`reward.py`):**
   - `reward = structure`, matching agent stroke *i* to target stroke *i* by index. A parse failure gives 0.
   - Every level is returned in `info` for logging.
   - Add these only once the failure they fix is observed: a placement term, a direction check, Hungarian matching.
+  - **Cost:** about 50 ms for a 25-stroke character on one core. Geometry is built once per stroke and transformed under the fit; target moments are cached on the entry.
 
 ### 3.4 Splits (`splits.py`, committed under `splits/`)
 - **Exclusion:** all 82 bench characters are removed from every training set.

@@ -19,12 +19,27 @@ class StrokeGeometry:
     quads: np.ndarray  # (Q, 4, 2): convex hull between consecutive discs
     polygons: tuple[np.ndarray, ...] = field(default=())  # freehand outlines (may self-intersect)
 
+    def transformed(self, s: float, t) -> "StrokeGeometry":
+        """Exact image under scale s then translation t (discs and quads map to discs and quads)."""
+        t = np.asarray(t, dtype=np.float64)
+        discs = self.discs.copy()
+        discs[:, :2] = discs[:, :2] * s + t
+        discs[:, 2] *= s
+        return StrokeGeometry(
+            discs=discs,
+            quads=self.quads * s + t if len(self.quads) else self.quads,
+            polygons=tuple(p * s + t for p in self.polygons),
+        )
+
     def bounds(self) -> tuple[float, float, float, float]:
         xs, ys = [], []
         if len(self.discs):
             d = self.discs
             xs += [d[:, 0] - d[:, 2], d[:, 0] + d[:, 2]]
             ys += [d[:, 1] - d[:, 2], d[:, 1] + d[:, 2]]
+        if len(self.quads):
+            xs.append(self.quads[..., 0].ravel())
+            ys.append(self.quads[..., 1].ravel())
         for p in self.polygons:
             xs.append(p[:, 0])
             ys.append(p[:, 1])
