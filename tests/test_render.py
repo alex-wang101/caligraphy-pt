@@ -4,11 +4,11 @@ import io
 import numpy as np
 import pytest
 
-from calligraphy.canvas import Canvas, CanvasConfig, StrokeError
+from calligraphy.canvas import Canvas, CanvasConfig, StrokeError, format_ids
 from calligraphy.frame import catmull_rom, resample_spacing
 from calligraphy.render.brushes import DiscBrush, FreehandBrush
 from calligraphy.render.raster import mask_iou, rasterize_mask
-from calligraphy.tools import ParseError, dispatch, format_strokes, parse_response, tool_schemas
+from calligraphy.tools import TOOLS, ParseError, dispatch, format_strokes, parse_response, phase2_messages, tool_schemas
 
 STROKES = [
     {"points": [[200, 300, 0.5], [500, 320, 1.0], [800, 300, 0.4]], "width": 60},
@@ -109,7 +109,71 @@ def test_dispatch_returns_text_for_strokes_and_image_for_capture():
     cap = dispatch(c, "capture_canvas", {})
     assert cap.image is not None and cap.image.size == (224, 224)
     assert dispatch(c, "submit", {}).done
-    assert [t["function"]["name"] for t in tool_schemas()] == ["create_stroke", "capture_canvas", "submit"]
+    assert not dispatch(c, "erase_all", {}).ok and not dispatch(c, "create_stroke", [1, 2]).ok
+
+
+def test_every_tool_is_defined_once_and_reaches_the_model():
+    """Schemas, the system prompt and dispatch are all built from TOOLS."""
+    cfg = CanvasConfig(action_frame=64, max_points=12)
+    assert list(TOOLS) == ["create_stroke", "delete_stroke", "capture_canvas", "submit"]
+    schemas = tool_schemas(cfg)
+    assert [t["function"]["name"] for t in schemas] == list(TOOLS)
+    assert schemas[0]["function"]["parameters"]["properties"]["points"]["maxItems"] == 12
+    assert "64x64" in schemas[0]["function"]["description"] and "at most 12 points" in schemas[0]["function"]["description"]
+    system = phase2_messages("永", "yǒng", cfg)[0]["content"]
+    for tool in TOOLS.values():
+        assert f"- {tool.name}: {tool.describe(cfg)}" in system
+
+
+def test_delete_keeps_ids_and_redraws_in_place():
+    extra = {"points": [[100, 800, 1.0], [900, 820, 1.0]], "width": 40}
+    c = Canvas(CanvasConfig(obs_size=128))
+    for s in [*STROKES, extra]:
+        c.create_stroke(s["points"], s["width"])
+    first, _, third = c.strokes
+    assert c.stroke_ids == [1, 2, 3] and c.next_id() == 4
+
+    c.delete_stroke(2)
+    assert c.stroke_ids == [1, 3] and c.strokes == [first, third]  # the others keep their numbers
+    assert c.next_id() == 2  # the next stroke takes the deleted one's place
+    assert png_hash(c.capture()) == png_hash(c.render(128))  # the deleted ink is gone from the image
+
+    redrawn = c.create_stroke(STROKES[1]["points"], STROKES[1]["width"])
+    assert c.stroke_ids == [1, 2, 3] and c.strokes == [first, redrawn, third]
+    assert png_hash(c.capture()) == png_hash(c.render(128))
+
+    c.delete_stroke(3)  # deleting the last stroke frees its number too
+    assert c.stroke_ids == [1, 2] and c.next_id() == 3
+    c.delete_stroke(2.0)  # models often send whole numbers as floats
+    assert c.stroke_ids == [1]
+
+
+@pytest.mark.parametrize("stroke_id", [0, 3, -1, "1", None, 1.5, True])
+def test_delete_rejects_missing_or_malformed_ids(stroke_id):
+    c = Canvas()
+    for s in STROKES:
+        c.create_stroke(s["points"], s["width"])
+    with pytest.raises(StrokeError):
+        c.delete_stroke(stroke_id)
+    assert c.stroke_ids == [1, 2]
+
+
+def test_dispatch_delete_reports_what_remains():
+    c = Canvas()
+    for s in STROKES * 2:
+        dispatch(c, "create_stroke", s)
+    r = dispatch(c, "delete_stroke", {"stroke_id": 2})
+    assert r.ok and r.stroke_id == 2 and "strokes on the canvas: 1, 3-4" in r.text and "becomes stroke 2" in r.text
+    again = dispatch(c, "delete_stroke", {"stroke_id": 2})
+    assert not again.ok and again.text.startswith("error: no stroke 2")
+    created = dispatch(c, "create_stroke", STROKES[1])
+    assert created.ok and created.stroke_id == 2 and c.stroke_ids == [1, 2, 3, 4]
+
+
+def test_format_ids():
+    assert format_ids([]) == "none"
+    assert format_ids([4]) == "4"
+    assert format_ids([1, 2, 4, 5, 6, 9]) == "1-2, 4-6, 9"
 
 
 def test_parse_response_roundtrip_and_fences():

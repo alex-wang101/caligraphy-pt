@@ -12,6 +12,7 @@ export function RunForm({ onStarted }: Props) {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [dataset, setDataset] = useState("bench");
+  const [mode, setMode] = useState<"single" | "tools">("single");
   const [characters, setCharacters] = useState("永國心");
   const [limit, setLimit] = useState(10);
   const [concurrency, setConcurrency] = useState(2);
@@ -71,7 +72,7 @@ export function RunForm({ onStarted }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const { run_id } = await api.startRun({ ...request(), dataset, characters, limit: limit || null, concurrency });
+      const { run_id } = await api.startRun({ ...request(), dataset, characters, limit: limit || null, concurrency, mode });
       setApiKey(""); // the server holds it for this run; don't keep it in the page
       onStarted(run_id);
       setStarted((await api.run(run_id)).summary);
@@ -185,6 +186,13 @@ export function RunForm({ onStarted }: Props) {
             </label>
           )}
           <label>
+            How the model answers
+            <select value={mode} onChange={(e) => setMode(e.target.value as "single" | "tools")}>
+              <option value="single">One reply with every stroke</option>
+              <option value="tools">Step by step with tools (draw, delete, look)</option>
+            </select>
+          </label>
+          <label>
             Parallel requests
             <input type="number" min={1} max={16} value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} />
           </label>
@@ -199,9 +207,16 @@ export function RunForm({ onStarted }: Props) {
             </label>
           )}
         </div>
+        {mode === "tools" && (
+          <p className="muted small">
+            The model draws one stroke at a time, can ask for an image of its canvas and can delete a stroke and redraw it. Every tool call is
+            recorded, with the canvas before and after it. A character takes several requests instead of one.
+          </p>
+        )}
         {!provider.local && (
           <p className="muted small">
-            Hosted APIs bill per request: one request per character, and a full answer is a few thousand output tokens. Start with a small limit.
+            Hosted APIs bill per request: one request per character{mode === "tools" ? " and reply" : ""}, and a full answer is a few thousand output
+            tokens. Start with a small limit.
           </p>
         )}
         <div className="row">

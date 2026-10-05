@@ -42,6 +42,21 @@ sft_target = format_strokes(convert(entry))  # SFT label in the phase-1 JSON for
 reward, info = compute_reward(sft_target, entry)  # reward v1 = structure; info logs every level
 ```
 
+A multi-turn episode (phase 2) runs through `Episode`, which records every call:
+
+```python
+from calligraphy.episode import Episode
+from calligraphy.tools import phase2_messages, tool_schemas
+
+messages, tools = phase2_messages("永", "yǒng"), tool_schemas()  # what the model is given
+ep = Episode(entry)
+ep.call("create_stroke", '{"points": [[420, 70, 0.3], [550, 180, 0.8]], "width": 90}')  # the model's JSON arguments
+image = ep.call("capture_canvas", "{}").image  # what the model is shown
+ep.call("submit", "{}")
+reward, info = compute_reward(ep.final_response(), entry)  # the same reward path as phase 1
+ep.events  # the trace: every call, its result and the canvas score after each change
+```
+
 ## Viewer
 
 ```bash
@@ -71,7 +86,7 @@ The providers are:
 - OpenRouter;
 - Anthropic.
 
-Keys come from the provider's environment variable in the API server's terminal, or can be pasted in the form. A pasted key is held in memory for the run only and is never saved. The same runner works from the command line:
+Keys come from the provider's environment variable (set in the API server's terminal or in a gitignored `.env` at the repo root), or can be pasted in the form. A pasted key is held in memory for the run only and is never saved. The same runner works from the command line:
 
 ```bash
 uv run python scripts/run_agent.py --list-providers
@@ -83,6 +98,22 @@ uv run python scripts/run_agent.py --provider ollama --model qwen3:8b --dataset 
 
 To check the pipeline without a model, start the stub (`uv run python scripts/stub_model.py`) and use `--provider stub --model converter`.
 
+### Multi-turn runs with tools
+
+`--mode tools` gives the model four tools instead of asking for one answer: `create_stroke`, `delete_stroke`, `capture_canvas` (an image of its own canvas) and `submit`. Every model reply and tool call is recorded.
+
+```bash
+uv run python scripts/run_agent.py --provider stub --model converter --mode tools --dataset viz16 --limit 4
+```
+
+```bash
+uv run python scripts/show_trace.py <run_id> 矛
+```
+
+The run folder then also holds `traces/<index>.json` (the full episode) and `traces/<index>/step-NNN.png` (each image the model was shown). `scripts/run_report.py <run_id>` adds tool-use and self-correction numbers.
+
+In the viewer, open a multi-turn answer under **Agent runs** and scroll to **Tool calls**: every call is listed in order with the canvas before and after it. The stroke a call drew is blue; the stroke a call is about to delete is red.
+
 ## Scripts
 
 | Script | What it does |
@@ -91,6 +122,8 @@ To check the pipeline without a model, start the stub (`uv run python scripts/st
 | `scripts/bench_render.py` | Measures renderer throughput (stroke steps/s, characters/s, scoring masks). |
 | `scripts/convert_report.py` | Gives converter IoU over the full dataset (naive vs fixed variants), using every core, in about 10 minutes. |
 | `scripts/normalization_report.py` | Shows how the reward treats characters that are too small, too big, off-centre, squashed or rotated. Writes `out/normalization_<char>.png`. |
-| `scripts/run_agent.py` | Runs a model on a dataset from the command line (the same runner as the viewer). |
-| `scripts/stub_model.py` | A fake OpenAI-compatible model on port 8100 that answers with the converter output. |
+| `scripts/run_agent.py` | Runs a model on a dataset from the command line (the same runner as the viewer). `--resume <run_id>` continues a run stopped by a rate limit. |
+| `scripts/run_report.py` | Summarizes a run against a ceiling and two floors, and writes a reference-vs-model contact sheet. For tools-mode runs it adds tool use and self-correction. |
+| `scripts/show_trace.py` | Prints one tools-mode episode step by step and writes a filmstrip of the canvas images the model saw. |
+| `scripts/stub_model.py` | A fake OpenAI-compatible model on port 8100 that answers with the converter output. With tools it plays a scripted agent that fixes one misplaced stroke. |
 | `scripts/make_splits.py` | Regenerates `splits/`. The splits are frozen and committed, so only rerun this deliberately. |

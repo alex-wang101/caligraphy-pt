@@ -64,6 +64,82 @@ export type Rollout = {
   error: string | null;
   latency_s: number;
   stop_reason: string | null;
+  mode: "single" | "tools";
+  trace_summary: TraceSummary | null;
+};
+
+/** One multi-turn episode in numbers (tools mode). */
+export type TraceSummary = {
+  end_reason: string;
+  n_turns: number;
+  n_tool_calls: number;
+  calls: Record<string, number>;
+  n_failed_calls: number;
+  n_skipped_calls: number;
+  n_captures: number;
+  n_deletes: number;
+  n_redraws: number;
+  n_nudges: number;
+  n_strokes: number;
+  checked_final: boolean;
+  final_score: number | null;
+  peak_score: number | null;
+  draft_score: number | null;
+  duration_s: number;
+};
+
+export type StepScore = { structure: number; shape: number; strokes: Record<string, number> };
+
+export type ModelEvent = {
+  i: number;
+  type: "model";
+  t_s: number;
+  turn: number;
+  text: string;
+  reasoning: string;
+  stop_reason: string | null;
+  latency_s: number;
+  usage: Record<string, unknown>;
+  n_tool_calls: number;
+  error: string | null;
+};
+
+export type ToolEvent = {
+  i: number;
+  type: "tool";
+  t_s: number;
+  turn: number;
+  call_id: string | null;
+  name: string;
+  arguments: Record<string, unknown> | null;
+  arguments_raw?: string;
+  ok: boolean;
+  skipped?: boolean;
+  result: string;
+  stroke_id?: number | null;
+  stroke_ids?: number[];
+  redraw?: boolean;
+  deleted_stroke_score?: number | null;
+  score?: StepScore | null;
+  image?: string;
+  image_size?: number;
+};
+
+export type TraceEvent =
+  | ModelEvent
+  | ToolEvent
+  | { i: number; type: "nudge"; t_s: number; turn: number; text: string }
+  | { i: number; type: "end"; t_s: number; reason: string };
+
+export type Trace = {
+  index: number;
+  character: string;
+  model: string;
+  system: string;
+  user: string;
+  events: TraceEvent[];
+  summary: TraceSummary;
+  reward: number;
 };
 
 export type NormCase = {
@@ -95,7 +171,7 @@ export type DatasetOption = { id: string; label: string };
 export type RunSummary = {
   id: string;
   created_at: string;
-  status: "running" | "done" | "cancelled" | "error" | "interrupted";
+  status: "running" | "done" | "cancelled" | "error" | "interrupted" | "rate_limited";
   provider: string;
   model: string;
   base_url: string;
@@ -109,6 +185,7 @@ export type RunSummary = {
   mean_reward: number | null;
   elapsed_s: number;
   error?: string;
+  mode?: "single" | "tools";
 };
 
 export type RunRow = {
@@ -119,6 +196,7 @@ export type RunRow = {
   parse_ok: boolean;
   error: string | null;
   latency_s: number;
+  trace_summary: TraceSummary | null;
 };
 
 export type RunDetail = { summary: RunSummary; rollouts: RunRow[] };
@@ -132,7 +210,13 @@ export type ModelRequest = {
   max_tokens?: number;
 };
 
-export type RunRequest = ModelRequest & { dataset: string; characters?: string; limit?: number | null; concurrency?: number };
+export type RunRequest = ModelRequest & {
+  dataset: string;
+  characters?: string;
+  limit?: number | null;
+  concurrency?: number;
+  mode?: "single" | "tools";
+};
 
 export type TestResult = { ok: boolean; text: string; error: string | null; latency_s: number; key_source: string };
 
@@ -178,4 +262,12 @@ export const api = {
   runs: () => json<RunSummary[]>("/api/agent/runs"),
   run: (id: string) => json<RunDetail>(`/api/agent/runs/${encodeURIComponent(id)}`),
   cancelRun: (id: string) => post<{ ok: boolean }>(`/api/agent/runs/${encodeURIComponent(id)}/cancel`, {}),
+  trace: (runId: string, index: number) => json<Trace>(`/api/agent/runs/${encodeURIComponent(runId)}/trace/${index}`),
+  /** The canvas as it stood after event `step` (-1: empty). `mark` draws one stroke in colour. */
+  traceStateUrl: (runId: string, index: number, step: number, mark?: { stroke: number; tone: "added" | "removed" }) =>
+    `/api/agent/runs/${encodeURIComponent(runId)}/trace/${index}/state?step=${step}&size=320` +
+    (mark ? `&mark=${mark.stroke}&tone=${mark.tone}` : ""),
+  /** An image exactly as the model was shown it. */
+  traceImageUrl: (runId: string, index: number, name: string) =>
+    `/api/agent/runs/${encodeURIComponent(runId)}/trace/${index}/image/${encodeURIComponent(name)}`,
 };

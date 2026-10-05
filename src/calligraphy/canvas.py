@@ -1,4 +1,4 @@
-"""Canvas: validated create_stroke + incremental rendering. Framework-free."""
+"""Canvas: validated create_stroke / delete_stroke + incremental rendering. Framework-free."""
 
 from __future__ import annotations
 
@@ -65,22 +65,61 @@ def validate_stroke(points, width, config: CanvasConfig) -> tuple[np.ndarray, fl
 
 
 class Canvas:
+    """Strokes live in numbered slots (ids from 1). Deleting a stroke empties its slot
+    without renumbering the others, and the next stroke created fills the lowest
+    empty slot, so a redrawn stroke keeps its place in the stroke order.
+    """
+
     def __init__(self, config: CanvasConfig | None = None):
         self.config = config or CanvasConfig()
         self.brush = get_brush(self.config.brush)
         self.reset()
 
     def reset(self) -> None:
-        self.strokes: list[Stroke] = []
+        self._slots: list[Stroke | None] = []
         self._layer = InkLayer(self.config.obs_size, self.config.supersample)
+
+    @property
+    def strokes(self) -> list[Stroke]:
+        """Strokes on the canvas in stroke order (what gets rendered and scored)."""
+        return [s for s in self._slots if s is not None]
+
+    @property
+    def stroke_ids(self) -> list[int]:
+        return [i + 1 for i, s in enumerate(self._slots) if s is not None]
+
+    def next_id(self) -> int:
+        """The id the next create_stroke will get: the lowest empty slot, else a new one."""
+        return next((i + 1 for i, s in enumerate(self._slots) if s is None), len(self._slots) + 1)
 
     def create_stroke(self, points, width) -> Stroke:
         if len(self.strokes) >= self.config.max_strokes:
             raise StrokeError(f"stroke limit reached ({self.config.max_strokes})")
         pts, w = validate_stroke(points, width, self.config)
         stroke = Stroke(pts, w, self.brush.geometry(pts, w))
-        self.strokes.append(stroke)
-        self._layer.add(stroke.geometry)
+        i = self.next_id() - 1
+        if i == len(self._slots):
+            self._slots.append(stroke)
+        else:
+            self._slots[i] = stroke
+        self._layer.add(stroke.geometry)  # ink is a union, so paint order doesn't matter
+        return stroke
+
+    def delete_stroke(self, stroke_id) -> Stroke:
+        """Remove one stroke by id. The other strokes keep their ids."""
+        if isinstance(stroke_id, float) and stroke_id.is_integer():
+            stroke_id = int(stroke_id)
+        if not isinstance(stroke_id, (int, np.integer)) or isinstance(stroke_id, bool):
+            raise StrokeError(f"stroke_id must be an integer, got {stroke_id!r}")
+        if not 1 <= stroke_id <= len(self._slots) or self._slots[stroke_id - 1] is None:
+            raise StrokeError(f"no stroke {stroke_id} on the canvas (strokes: {format_ids(self.stroke_ids)})")
+        stroke = self._slots[stroke_id - 1]
+        self._slots[stroke_id - 1] = None
+        while self._slots and self._slots[-1] is None:
+            self._slots.pop()
+        self._layer = InkLayer(self.config.obs_size, self.config.supersample)
+        for s in self.strokes:
+            self._layer.add(s.geometry)
         return stroke
 
     def capture(self) -> Image.Image:
@@ -94,3 +133,18 @@ class Canvas:
 
     def ink_mask(self, size: int = SCORE_SIZE) -> np.ndarray:
         return rasterize_mask([s.geometry for s in self.strokes], size=size)
+
+
+def format_ids(ids: list[int]) -> str:
+    """[1, 2, 4, 5, 6, 9] -> "1-2, 4-6, 9"; [] -> "none"."""
+    if not ids:
+        return "none"
+    runs, start, prev = [], ids[0], ids[0]
+    for i in ids[1:] + [None]:
+        if i is not None and i == prev + 1:
+            prev = i
+            continue
+        runs.append(str(start) if start == prev else f"{start}-{prev}")
+        if i is not None:
+            start = prev = i
+    return ", ".join(runs)

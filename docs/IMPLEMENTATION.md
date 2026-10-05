@@ -23,8 +23,9 @@ This is a compressed version of "Implementation Plan v2" with the concrete engin
   - The 米字格 grid is composited under the ink, and the ink mask is kept separate from the display composite.
 - **Episodes:**
   - **Phase 1:** single turn, text only. The model emits every stroke in one JSON response, and the environment renders and scores once.
-  - `create_stroke` returns text only. Images come only from `capture_canvas`, which belongs to phase 2. Its default size is 224 px, about 49 tokens.
-  - `update_stroke` and `delete_strokes` are deferred to phase 2.
+  - **Phase 2:** multi-turn, with four tools: `create_stroke`, `delete_stroke`, `capture_canvas`, `submit` (section 3.7). The final canvas is scored exactly like a phase-1 answer.
+  - `create_stroke` and `delete_stroke` return text only. Images come only from `capture_canvas`. `CanvasConfig.obs_size` defaults to 224 px (about 49 tokens); tools-mode runs use 448 px (about 200 tokens) so a misplaced stroke is visible.
+  - There is no `update_stroke`: a stroke is changed by deleting it and drawing it again. No tool shows a reference image.
 - **Core:**
   - `Canvas` and `tools.py` import no trainer code.
   - Python ≥ 3.12. The NeMo Gym requirement of 3.13.14 is gone now that Gym is out of scope.
@@ -218,10 +219,48 @@ When a child in the decomposition is an unnamed nested subtree, its leaves count
   - **OpenAI-compatible HTTP** (httpx): local Ollama, LM Studio, llama.cpp, vLLM (on a cloud GPU over an SSH tunnel), OpenAI, OpenRouter. If a hosted reasoning model rejects `max_tokens` or `temperature`, the request is retried with `max_completion_tokens` or without temperature.
   - **Anthropic** through the official SDK. Credentials come from `ANTHROPIC_API_KEY` or an `ant auth login` profile. No temperature is sent (current models reject it), and the server-side refusal fallback (`fallbacks: "default"`) is on for the models that support it.
 - **Presets** (`agent/providers.py`): each carries its setup steps, which the viewer and `run_agent.py --list-providers` both show. `stub` (`scripts/stub_model.py`, port 8100) is a fake model that answers with the converter output; use it to test the pipeline (mean reward about 0.9).
-- **Keys:** a key is read from the preset's environment variable in the API server's process, or pasted in the UI. A pasted key lives only in memory for that run. It is never written to `out/runs/` and never returned by the API (`SecretStr`). The UI only shows whether the environment variable is set.
+- **Keys:** a key is read from the preset's environment variable in the API server's process (the server and `run_agent.py` also load the repo's gitignored `.env`; variables already set in the shell win), or pasted in the UI. A pasted key lives only in memory for that run. It is never written to `out/runs/` and never returned by the API (`SecretStr`). The UI only shows whether the environment variable is set.
 - **Datasets:** bench (88, eval only), `viz16`, `val`, `test_compositional`, or custom characters, each with an optional limit and concurrency.
 - **Storage:** `out/runs/<run_id>/summary.json` (settings, progress, mean reward, parse rate, errors) and `rollouts.jsonl` (raw response, reward info, latency, usage). A run still marked running after a server restart shows as `interrupted`.
 - **Robustness:** errors never stop a run; each one becomes a zero-reward rollout. The parser skips `<think>…</think>` blocks, which local reasoning models emit.
+- **Rate limits:** a transient HTTP 429 is retried after 10, 30 and 60 s (or `Retry-After`). A 429 that persists, or a daily cap (`per-day`), stops the run with status `rate_limited` and is **not** written as a zero.
+- **Resume:** `run_agent.py --resume <run_id>` reruns unanswered items and rows with a transport `error` into the same run, keeping every scored answer. The summary stores `characters`, `extra_body` and a `resumed` count so a run can be rebuilt.
+- **Provider options:** `--extra-body` JSON is merged into the request and saved in the summary, e.g. `{"reasoning": {"enabled": false}}` to switch off OpenRouter thinking. Separate reasoning text (`message.reasoning`) is kept in each rollout as `reasoning`.
+- **Report:** `scripts/run_report.py <run_id>` prints parse rate, reward, stroke-count accuracy and placement next to a ceiling (converter answer), a wrong-character floor (another character's converter answer with the closest stroke count) and a random-strokes floor, and writes `report.json` and `sheet.png` (reference | model) into the run folder.
+
+### 3.7 Phase 2: tools, episodes and traces (`tools.py`, `canvas.py`, `episode.py`)
+- **Tools (`tools.py`).** Each tool is one `Tool` object: name, the description the model reads, the argument schema and the function that runs it. `TOOLS` lists them in order. The schemas sent to the model, the tool list in the system prompt (`phase2_messages`) and `dispatch` are all built from `TOOLS`, so a tool is added or changed in one place. The canvas holds the drawing; the tools only translate a call into a canvas operation and a text result.
+
+  | Tool | Arguments | Result |
+  |---|---|---|
+  | `create_stroke` | `points`, `width` (as in phase 1) | `stroke N created; the canvas has K strokes` |
+  | `delete_stroke` | `stroke_id` | `stroke N deleted; strokes on the canvas: 1-2, 4-10. The next stroke you create becomes stroke N.` |
+  | `capture_canvas` | none | the canvas image with the 米字格 grid |
+  | `submit` | none | ends the episode |
+
+  A rejected call (bad JSON, malformed stroke, unknown stroke id, unknown tool) returns `error: …`, changes nothing, and the episode goes on.
+- **Stroke numbers (`canvas.py`).** Strokes live in numbered slots, from 1. Deleting a stroke empties its slot without renumbering the others. The next `create_stroke` fills the lowest empty slot, so a redrawn stroke keeps its place in the stroke order and index-matched scoring stays meaningful.
+  - A gap that is never refilled closes at scoring time: the reward sees the strokes left on the canvas, in slot order. Deleting a middle stroke without redrawing it therefore shifts every later stroke by one under index matching.
+  - Known limit: a model that deletes a spurious middle stroke and then draws a *new* stroke will see it land in the old slot. Trailing strokes don't have this problem.
+- **Episode (`episode.py`).** `Episode.call(name, arguments)` runs one tool call and records it; the driver also reports each model reply. Framework-free, so the agent runner and a trainer produce the same trace. Limits (`EpisodeConfig`): 64 model replies, 128 tool calls, 2 nudges.
+  - It ends by `submit`, `max_turns`, `max_tool_calls`, `no_tool_call` (a reply without a tool call, after 2 reminders), `error` or `rate_limited`. However it ends, the canvas is scored as it stands.
+  - The final canvas is serialized in the phase-1 format and goes through `compute_reward`, so both phases share one reward path and the viewer opens a phase-2 answer unchanged.
+- **Trace events,** in order, each with an index `i`, the model reply number `turn` and seconds since the start `t_s`:
+  - `model`: the reply's text, reasoning, stop reason, latency, token usage, number of tool calls, and any transport error;
+  - `tool`: name, parsed `arguments` (or `arguments_raw` if the JSON was invalid), `ok`, the `result` text, `stroke_id`, and the `stroke_ids` on the canvas afterwards. A `create_stroke` also has `redraw` (it filled a deleted slot). A `delete_stroke` has `deleted_stroke_score` (how good the removed stroke was). A `capture_canvas` has `image`, the saved PNG the model was shown. A call that arrives after the episode ended is recorded with `skipped`;
+  - `nudge` and `end`.
+- **Step scores.** After every accepted `create_stroke` or `delete_stroke`, the event's `score` holds the structure and shape scores of the canvas as it stands (what it would get if submitted then) and each stroke's share by stroke id. They are logged only and never shown to the model. They jump around on partial canvases: with two or three strokes the alignment is fragile, and between a delete and its redraw every later stroke is off by one. Compare the draft with the final canvas, not step with step.
+- **Episode summary** (`trace_summary` in `rollouts.jsonl`): end reason, turns, tool calls by name, rejected and skipped calls, captures, deletes, redraws, nudges, strokes left, `checked_final` (a capture after the last change), `draft_score` (just before the first delete), `peak_score` and `final_score`.
+- **Files** (`--mode tools`): `rollouts.jsonl` holds the final answer, reward and `trace_summary`; `traces/<index>.json` holds the system prompt, the tool schemas, the limits and every event; `traces/<index>/step-NNN.png` holds each image the model was shown. Reasoning text lives only in the trace file, which keeps `rollouts.jsonl` small.
+- **Transcript.** Kept in the OpenAI chat format for both backends: tool results are `tool` messages, and each canvas image follows the turn's tool results as a user message with an `image_url` part. The Anthropic backend converts this to one user turn of `tool_result` blocks followed by the image, and sends the API's own content blocks (thinking included) back unchanged. It is covered by a conversion test but has not been run against the live API.
+- **Scripts.** `run_agent.py --mode tools [--max-turns N --max-tool-calls N --obs-size PX]`; `show_trace.py <run_id> <index|character>` prints an episode step by step and writes a filmstrip of what the model saw; `run_report.py` adds tool-use and self-correction metrics for tools-mode runs. `stub_model.py` plays a scripted agent that draws every stroke with one out of place, looks, deletes and redraws it, looks again and submits.
+- **Replay.** `episode.replay(events, upto)` rebuilds the canvas as it stood after any event from the trace alone. The state before tool call *i* is `replay(events, i - 1)` and the state after it is `replay(events, i)`. A test checks that the rebuilt canvas has the recorded stroke numbers after every call and is pixel-identical to each image the model was shown.
+- **API.** `POST /api/agent/runs` takes `mode`, `max_turns`, `max_tool_calls` and `obs_size`.
+  - `GET /api/agent/runs/{run_id}/trace/{index}` returns the trace.
+  - `GET …/trace/{index}/image/{name}` returns a saved image, exactly as the model was shown it.
+  - `GET …/trace/{index}/state?step=&size=&mark=&tone=` renders the canvas after event `step` (−1: empty). `mark` draws one stroke in colour: blue for the stroke a call just drew (`tone=added`), red for the one it is about to delete (`tone=removed`).
+- **Viewer.** A multi-turn answer has a **Tool calls** section under the score tiles. It lists every model reply and tool call in order. Each call shows its arguments, the result text the model got back, the strokes on the canvas and the score before → after, and two canvas images: before the call and after it. A `capture_canvas` row shows the saved image as the model saw it. The prompt and any thinking text are in collapsible blocks. The New run form has a "How the model answers" choice, so tools-mode runs can be started from the page.
+- **A run started from the command line** now shows as `running` in the viewer while its process is alive (the summary records the `pid`), instead of `interrupted`.
 
 ## 4. Build order
 
@@ -237,7 +276,7 @@ When a child in the decomposition is an unnamed nested subtree, its leaves count
 - NeMo Gym environment (dropped).
 - Image spike (M5).
 - SFT (M6) and GRPO (M7) on NeMo RL.
-- Multi-turn (M8).
+- Multi-turn training (M8). The environment side (tools, episodes, traces, evaluation harness) is built: section 3.7.
 - VLM aesthetics judge (M9).
 
 The v2 notes still apply to those milestones:

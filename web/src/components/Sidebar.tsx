@@ -239,7 +239,9 @@ function RunsList({ selectedDrawing, onSelect, onNewRun, activeRun, onActiveRun 
                 <span className="task-glyph">{r.character}</span>
                 <span className="task-meta">
                   <span className={r.error ? "bad-text ellipsis" : "ellipsis"}>{r.error ? r.error : r.parse_ok ? "parsed" : "did not parse"}</span>
-                  <span className="muted">{r.latency_s.toFixed(1)} s</span>
+                  <span className="muted">
+                    {r.latency_s.toFixed(1)} s{r.trace_summary ? ` · ${r.trace_summary.n_tool_calls} calls` : ""}
+                  </span>
                 </span>
                 <RewardPill value={r.reward} />
               </button>
@@ -279,6 +281,7 @@ export function RunCard({ s }: { s: RunSummary }) {
       </div>
       <div className="muted run-sub ellipsis">
         {s.provider} · {s.dataset_label}
+        {s.mode === "tools" ? " · tools" : ""}
       </div>
       <div className="progress" aria-label={`${s.n_done} of ${s.n_total}`}>
         <i style={{ width: `${pct}%` }} />

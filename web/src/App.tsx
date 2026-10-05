@@ -4,6 +4,7 @@ import { EnginePanel, ReferencePanel, Show, StrokesPanel } from "./components/Pa
 import { RunForm } from "./components/RunForm";
 import { ScoreSummary, StrokeTable } from "./components/Scores";
 import { RewardPill, Sidebar, Source } from "./components/Sidebar";
+import { TracePanel } from "./components/Trace";
 
 const IDS_NAMES: Record<string, string> = {
   "⿰": "left–right",
@@ -109,6 +110,11 @@ export default function App() {
   };
 
   const toggle = (name: keyof Show) => setShow((s) => ({ ...s, [name]: !s[name] }));
+  // The page keeps the selected character in the URL hash, so scroll instead of following the link.
+  const jumpToTrace = (e: React.MouseEvent) => {
+    e.preventDefault();
+    document.getElementById("trace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const meta = data?.meta ?? {};
   const pinyin = Array.isArray(meta.pinyin) ? (meta.pinyin as string[]).join(", ") : (meta.pinyin as string | undefined);
 
@@ -167,6 +173,12 @@ export default function App() {
                 </div>
                 {data.rollout.error ? (
                   <div className="bad-text">{data.rollout.error}</div>
+                ) : data.rollout.trace_summary ? (
+                  <div className="muted small">
+                    {data.strokes.length} strokes left on the canvas for a {data.n_strokes}-stroke character ·{" "}
+                    {data.rollout.trace_summary.n_tool_calls} tool calls in {data.rollout.trace_summary.n_turns} turns · ended by{" "}
+                    {data.rollout.trace_summary.end_reason.replace(/_/g, " ")} · <a href="#trace" onClick={jumpToTrace}>see every call ↓</a>
+                  </div>
                 ) : (
                   <div className="muted small">
                     Parsed {data.strokes.length} strokes for a {data.n_strokes}-stroke character
@@ -176,7 +188,10 @@ export default function App() {
                   </div>
                 )}
                 <details>
-                  <summary>Raw response ({data.rollout.response.length.toLocaleString()} characters)</summary>
+                  <summary>
+                    {data.rollout.trace_summary ? "Final canvas as strokes" : "Raw response"} ({data.rollout.response.length.toLocaleString()}{" "}
+                    characters)
+                  </summary>
                   <pre>{data.rollout.response || "(empty)"}</pre>
                 </details>
               </section>
@@ -240,6 +255,7 @@ export default function App() {
             </div>
 
             <ScoreSummary data={data} />
+            {data.rollout?.trace_summary && <TracePanel rollout={data.rollout} />}
             <StrokeTable data={data} k={k} hovered={hovered} onHover={setHovered} onPick={setK} />
           </>
         )}

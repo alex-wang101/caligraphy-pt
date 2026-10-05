@@ -20,20 +20,22 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
 
-from calligraphy.agent.client import ModelConfig, complete
+from calligraphy.agent.client import ModelConfig, complete, load_env_file
 from calligraphy.agent.providers import PROVIDERS
-from calligraphy.agent.runner import DATASETS, RunManager
+from calligraphy.agent.runner import DATASETS, MODES, RunManager
 from calligraphy.canvas import Canvas, CanvasConfig, StrokeError
 from calligraphy.data.bench import bench_by_task, load_bench
 from calligraphy.data.mmah import get_entry, load_dictionary, load_graphics
 from calligraphy.data.types import CharacterEntry
+from calligraphy.episode import EpisodeConfig, replay
 from calligraphy.render.brushes import get_brush
-from calligraphy.render.raster import render_geometries
+from calligraphy.render.raster import InkLayer, composite, render_geometries
 from calligraphy.score.levels import score_character
 from calligraphy.score.reward import compute_reward
 from calligraphy.score.scenes import (
@@ -54,6 +56,7 @@ WEB_DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 DRAWINGS = ["converter", *[k for k in SCENES if k != "perfect"]]
 DRAWING_LABELS = {"converter": SCENE_LABELS["perfect"], **SCENE_LABELS}
 RUNS = RunManager()
+load_env_file()  # provider keys may live in the repo's .env (gitignored)
 
 
 def resolve(key: str) -> CharacterEntry:
@@ -165,6 +168,8 @@ def char(key: str, drawing_name: str = Query("converter", alias="drawing"), brus
             "error": record["error"] or (record["info"] or {}).get("error"),
             "latency_s": record["latency_s"],
             "stop_reason": record["stop_reason"],
+            "mode": record.get("mode") or "single",
+            "trace_summary": record.get("trace_summary"),  # tools mode: the episode in numbers
         }
     else:
         clamped = count_out_of_bounds(raw_drawing(key, drawing_name))
@@ -297,6 +302,7 @@ class ModelRequest(BaseModel):
     api_key: SecretStr | None = None  # held in memory for the run only
     temperature: float | None = 1.0
     max_tokens: int = Field(16000, ge=64, le=128000)
+    extra_body: dict = Field(default_factory=dict)  # provider options, saved with the run
 
     def config(self) -> ModelConfig:
         preset = PROVIDERS.get(self.provider)
@@ -312,6 +318,7 @@ class ModelRequest(BaseModel):
             key_env=preset.key_env,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            extra_body=self.extra_body,
         )
 
 
@@ -320,6 +327,10 @@ class RunRequest(ModelRequest):
     characters: str = ""
     limit: int | None = Field(None, ge=1)
     concurrency: int = Field(2, ge=1, le=16)
+    mode: str = "single"  # "tools": multi-turn episode with tools; the trace is saved with the run
+    max_turns: int = Field(EpisodeConfig.max_turns, ge=1, le=512)
+    max_tool_calls: int = Field(EpisodeConfig.max_tool_calls, ge=1, le=1024)
+    obs_size: int | None = Field(None, ge=64, le=1024)
 
 
 @app.post("/api/agent/test")
@@ -341,7 +352,10 @@ def test_connection(req: ModelRequest) -> dict:
 @app.post("/api/agent/runs")
 def start_run(req: RunRequest) -> dict:
     try:
-        run_id = RUNS.start(req.config(), req.dataset, req.characters, req.limit, req.concurrency)
+        run_id = RUNS.start(
+            req.config(), req.dataset, req.characters, req.limit, req.concurrency,
+            mode=req.mode, episode=EpisodeConfig(max_turns=req.max_turns, max_tool_calls=req.max_tool_calls), obs_size=req.obs_size,
+        )  # fmt: skip
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
     return {"run_id": run_id}
@@ -367,10 +381,78 @@ def get_run(run_id: str) -> dict:
             "parse_ok": bool((r["info"] or {}).get("parse_ok")),
             "error": r["error"] or (r["info"] or {}).get("error"),
             "latency_s": r["latency_s"],
+            "trace_summary": r.get("trace_summary"),  # tools mode only
         }
         for r in RUNS.rollouts(run_id)
     ]
     return {"summary": summary, "rollouts": rows}
+
+
+@app.get("/api/agent/modes")
+def modes() -> list[dict]:
+    return [{"id": k, "label": v} for k, v in MODES.items()]
+
+
+@app.get("/api/agent/runs/{run_id}/trace/{index}")
+def get_trace(run_id: str, index: int) -> dict:
+    """Every model reply and tool call of one tools-mode rollout."""
+    try:
+        return RUNS.trace(run_id, index)
+    except KeyError:
+        raise HTTPException(404, f"no trace for rollout {index} in run {run_id!r}") from None
+
+
+@app.get("/api/agent/runs/{run_id}/trace/{index}/image/{name}")
+def get_trace_image(run_id: str, index: int, name: str) -> FileResponse:
+    """A canvas image the model was shown (the `image` field of a capture_canvas event)."""
+    try:
+        return FileResponse(RUNS.trace_image(run_id, index, name), media_type="image/png")
+    except KeyError:
+        raise HTTPException(404, f"no image {name!r} for rollout {index} in run {run_id!r}") from None
+
+
+MARK_COLORS = {"added": (47, 111, 184), "removed": (200, 60, 45)}
+
+
+@lru_cache(maxsize=32)
+def _trace_at(root: str, run_id: str, index: int, mtime: float) -> dict:
+    return RUNS.trace(run_id, index)
+
+
+def cached_trace(run_id: str, index: int) -> dict:
+    """The trace, re-read only when its file changes (a resumed run rewrites it)."""
+    try:
+        mtime = (RUNS.root / run_id / "traces" / f"{index:04d}.json").stat().st_mtime
+        return _trace_at(str(RUNS.root), run_id, index, mtime)
+    except (FileNotFoundError, KeyError):
+        raise HTTPException(404, f"no trace for rollout {index} in run {run_id!r}") from None
+
+
+@app.get("/api/agent/runs/{run_id}/trace/{index}/state")
+def get_trace_state(
+    run_id: str,
+    index: int,
+    step: int = Query(-1, ge=-1, description="event index; the canvas is shown as it stood after this event (-1: empty)"),
+    size: int = Query(240, ge=32, le=1024),
+    mark: int | None = Query(None, description="stroke number to draw in colour"),
+    tone: str = Query("added", pattern="^(added|removed)$"),
+) -> Response:
+    """The canvas after event `step` of a tools-mode rollout, rebuilt from the trace.
+
+    The state before tool call i is step=i-1 and the state after it is step=i.
+    `mark` colours one stroke: the one a call just drew (added) or is about to delete (removed).
+    """
+    trace = cached_trace(run_id, index)
+    board = replay(trace["events"], step, CanvasConfig(**trace["canvas"]))
+    base, marked = InkLayer(size, board.config.supersample), InkLayer(size, board.config.supersample)
+    for stroke_id, stroke in zip(board.stroke_ids, board.strokes):
+        (marked if stroke_id == mark else base).add(stroke.geometry)
+    img = composite(base.image(), grid=True)
+    if mark in board.stroke_ids:
+        img = Image.composite(Image.new("RGB", img.size, MARK_COLORS[tone]), img, marked.image())
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(buf.getvalue(), media_type="image/png", headers={"Cache-Control": "max-age=60"})
 
 
 @app.post("/api/agent/runs/{run_id}/cancel")
