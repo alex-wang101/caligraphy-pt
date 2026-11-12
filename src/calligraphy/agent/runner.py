@@ -299,6 +299,7 @@ class RunManager:
             mean_reward=reward_sum / len(kept) if kept else None,
             resumed=summary.get("resumed", 0) + 1,
         )
+        summary.pop("finished_at", None)
         summary.pop("error", None)
         self._launch(run_dir, summary, config, todo)
         return [i for i, _, _ in todo]
@@ -360,6 +361,7 @@ class RunManager:
             status, summary["error"] = "error", f"{type(e).__name__}: {e}"
         with lock:
             summary["status"] = status
+            summary["finished_at"] = datetime.now().isoformat(timespec="seconds")
             summary["elapsed_s"] = round(elapsed_before + time.perf_counter() - t0, 1)
             self._write_summary(state)
 
@@ -389,8 +391,8 @@ class RunManager:
     def list(self) -> list[dict]:
         if not self.root.exists():
             return []
-        ids = sorted((p.name for p in self.root.iterdir() if (p / "summary.json").exists()), reverse=True)
-        return [self.summary(i) for i in ids]
+        runs = [self.summary(p.name) for p in self.root.iterdir() if (p / "summary.json").exists()]
+        return sorted(runs, key=lambda s: (s.get("created_at") or "", s["id"]), reverse=True)  # newest first
 
     def rollouts(self, run_id: str) -> list[dict]:
         path = self.root / run_id / "rollouts.jsonl"

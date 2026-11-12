@@ -171,6 +171,7 @@ export type DatasetOption = { id: string; label: string };
 export type RunSummary = {
   id: string;
   created_at: string;
+  finished_at?: string;
   status: "running" | "done" | "cancelled" | "error" | "interrupted" | "rate_limited";
   provider: string;
   model: string;
@@ -219,6 +220,83 @@ export type RunRequest = ModelRequest & {
 };
 
 export type TestResult = { ok: boolean; text: string; error: string | null; latency_s: number; key_source: string };
+
+/** Judge experiments: a model scores drawings of known quality (scripts/run_judge.py). */
+export type JudgeKind = "correct" | "flawed" | "wrong character" | "model answer";
+
+export type Judgement = {
+  score: number | null;
+  recognized_as: string;
+  is_correct_character: boolean | null;
+  problems: string;
+  parse_ok: boolean;
+};
+
+export type JudgeItem = {
+  index: number;
+  key: string;
+  character: string;
+  variant: string;
+  label: string;
+  kind: JudgeKind;
+  source: string | null;
+  reward: number;
+  shape: number;
+  n_strokes: number;
+  n_target: number;
+  reply: string;
+  error: string | null;
+  latency_s: number;
+  judge: Judgement | null;
+};
+
+export type JudgeVariantRow = {
+  variant: string;
+  label: string;
+  kind: JudgeKind;
+  n: number;
+  reward_mean: number;
+  judge_mean: number;
+  says_correct: number | null;
+};
+
+export type JudgeStats = {
+  n: number;
+  n_scored: number;
+  spearman: number | null;
+  pearson: number | null;
+  mae: number | null;
+  auc_good_bad: number | null;
+  n_good: number;
+  n_bad: number;
+  judge_mean_good: number | null;
+  judge_mean_bad: number | null;
+  reads_correct: number | null;
+  accepts_correct: number | null;
+  rejects_wrong: number | null;
+  by_variant: JudgeVariantRow[];
+};
+
+export type JudgeSummary = {
+  id: string;
+  created_at: string;
+  finished_at?: string;
+  status: "running" | "done" | "error" | "interrupted";
+  provider: string;
+  model: string;
+  temperature: number | null;
+  characters: string;
+  obs_size: number;
+  n_total: number;
+  n_done: number;
+  n_errors: number;
+  elapsed_s?: number;
+  error?: string;
+  prompt: string;
+  stats?: JudgeStats;
+};
+
+export type JudgeDetail = { summary: JudgeSummary; items: JudgeItem[] };
 
 export type RenderOpts = { drawing: string; brush: string; size: number; grid: boolean };
 
@@ -270,4 +348,7 @@ export const api = {
   /** An image exactly as the model was shown it. */
   traceImageUrl: (runId: string, index: number, name: string) =>
     `/api/agent/runs/${encodeURIComponent(runId)}/trace/${index}/image/${encodeURIComponent(name)}`,
+  judgeList: () => json<JudgeSummary[]>("/api/judge"),
+  judge: (id: string) => json<JudgeDetail>(`/api/judge/${encodeURIComponent(id)}`),
+  judgeImageUrl: (id: string, index: number) => `/api/judge/${encodeURIComponent(id)}/image/${index}.png`,
 };

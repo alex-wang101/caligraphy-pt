@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
 
 from calligraphy.agent.client import ModelConfig, complete, load_env_file
+from calligraphy.agent.judge import JudgeManager
 from calligraphy.agent.providers import PROVIDERS
 from calligraphy.agent.runner import DATASETS, MODES, RunManager
 from calligraphy.canvas import Canvas, CanvasConfig, StrokeError
@@ -56,6 +57,7 @@ WEB_DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 DRAWINGS = ["converter", *[k for k in SCENES if k != "perfect"]]
 DRAWING_LABELS = {"converter": SCENE_LABELS["perfect"], **SCENE_LABELS}
 RUNS = RunManager()
+JUDGE = JudgeManager()
 load_env_file()  # provider keys may live in the repo's .env (gitignored)
 
 
@@ -409,6 +411,33 @@ def get_trace_image(run_id: str, index: int, name: str) -> FileResponse:
         return FileResponse(RUNS.trace_image(run_id, index, name), media_type="image/png")
     except KeyError:
         raise HTTPException(404, f"no image {name!r} for rollout {index} in run {run_id!r}") from None
+
+
+# --- judge experiments (scripts/run_judge.py) ---------------------------------------
+
+
+@app.get("/api/judge")
+def list_judge() -> list[dict]:
+    """Experiments where a model scored drawings of known quality."""
+    return JUDGE.list()
+
+
+@app.get("/api/judge/{exp_id}")
+def get_judge(exp_id: str) -> dict:
+    try:
+        summary = JUDGE.summary(exp_id)
+    except KeyError:
+        raise HTTPException(404, f"unknown judge experiment {exp_id!r}") from None
+    return {"summary": summary, "items": JUDGE.items(exp_id)}
+
+
+@app.get("/api/judge/{exp_id}/image/{index}.png")
+def get_judge_image(exp_id: str, index: int) -> FileResponse:
+    """The image the model was shown for one drawing."""
+    try:
+        return FileResponse(JUDGE.image(exp_id, index), media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+    except KeyError:
+        raise HTTPException(404, f"no image {index} in judge experiment {exp_id!r}") from None
 
 
 MARK_COLORS = {"added": (47, 111, 184), "removed": (200, 60, 45)}

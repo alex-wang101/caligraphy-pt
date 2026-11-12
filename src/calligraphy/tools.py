@@ -60,6 +60,27 @@ def _no_arguments(config: CanvasConfig) -> dict:
     return {"type": "object", "properties": {}}
 
 
+# Stroke thickness in the dataset outlines, canvas units, measured over the bench
+# (1120 strokes): a stroke's body is 38-49 wide (quartiles), its thickest point
+# 59 at the median and 87 at p95. The converter uses one width per character,
+# 2 x the thickest radius (median 87), and sets each point's thickness with p.
+BODY_THICKNESS = (40, 50)
+PEAK_THICKNESS = (60, 100)
+TYPICAL_WIDTH = 90
+
+
+def thickness_guide(config: CanvasConfig) -> str:
+    """How thick strokes are, in action units, so the model can pick width and p."""
+    a = lambda v: round(v / config.unit)  # noqa: E731
+    return (
+        f"Stroke thickness: in this script a stroke's body is about {a(BODY_THICKNESS[0])}-{a(BODY_THICKNESS[1])} "
+        f"units wide, and its thickest point (where the brush lands, turns or presses into a hook) about "
+        f"{a(PEAK_THICKNESS[0])}-{a(PEAK_THICKNESS[1])}. Use width about {a(TYPICAL_WIDTH)} and set the thickness "
+        f"along the stroke with p: about 0.5 along the body, up to 1 where the brush presses hardest. "
+        f"width can be at most {a(config.max_width)}."
+    )
+
+
 def _create_stroke_parameters(config: CanvasConfig) -> dict:
     return {
         "type": "object",
@@ -71,7 +92,11 @@ def _create_stroke_parameters(config: CanvasConfig) -> dict:
                 "maxItems": config.max_points,
                 "description": "[[x, y, p], ...]",
             },
-            "width": {"type": "number", "description": "brush diameter at full pressure"},
+            "width": {
+                "type": "number",
+                "maximum": round(config.max_width / config.unit),
+                "description": f"brush diameter at full pressure, about {round(TYPICAL_WIDTH / config.unit)}",
+            },
         },
         "required": ["points", "width"],
     }
@@ -244,7 +269,8 @@ def phase1_messages(character: str, pinyin: str | None = None, config: CanvasCon
         "Each stroke is a list of points [x, y, p] in the direction the brush moves, from where "
         f"it lands to where it lifts (at most {n} points). p is pressure from 0 to 1: the brush "
         "radius at a point is width/2 * p. width is the brush diameter at full pressure.\n"
-        "Write the strokes in standard stroke order. Reply with JSON only:\n"
+        + thickness_guide(config)
+        + "\nWrite the strokes in standard stroke order. Reply with JSON only:\n"
         '{"strokes": [{"points": [[x, y, p], ...], "width": w}, ...]}'
     )
     name = f"{character} ({pinyin})" if pinyin else character
@@ -260,7 +286,8 @@ def phase2_messages(character: str, pinyin: str | None = None, config: CanvasCon
         f"Canvas: {f}x{f}, origin at the top-left, x to the right, y down. A 米字格 guide grid "
         f"marks the border, the centre lines x={h} and y={h}, and both diagonals; centre the "
         "character in the square.\n"
-        "Write the strokes in standard stroke order.\n"
+        + thickness_guide(config)
+        + "\nWrite the strokes in standard stroke order.\n"
         "Tools:\n" + "".join(f"- {t.name}: {t.describe(config)}\n" for t in TOOLS.values()) + "You may call several tools in one reply."
     )
     name = f"{character} ({pinyin})" if pinyin else character

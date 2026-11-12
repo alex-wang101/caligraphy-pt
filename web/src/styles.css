@@ -993,3 +993,198 @@ button:disabled {
     font-size: 48px;
   }
 }
+
+/* judge experiments */
+:root {
+  --k-correct: #2e7d4f;
+  --k-flawed: #2f6fb8;
+  --k-wrong: #b8432f;
+  --k-model: #8a5cc2;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --k-correct: #5fbf86;
+    --k-flawed: #6ea4e0;
+    --k-wrong: #e0785f;
+    --k-model: #b892e8;
+  }
+}
+.judge {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.judge-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+.judge-head h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+.judge-head p {
+  margin: 0;
+  max-width: 70ch;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.judge-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+@media (max-width: 1100px) {
+  .judge-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.judge-plot .scatter {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.scatter .grid-line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.scatter .diag {
+  stroke: var(--muted);
+  stroke-dasharray: 4 4;
+}
+.scatter .tick,
+.scatter .axis {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.scatter .axis {
+  font-size: 12px;
+}
+.scatter .pt {
+  fill-opacity: 0.75;
+  stroke: var(--surface);
+  stroke-width: 1;
+  cursor: default;
+}
+.scatter .pt.hot {
+  fill-opacity: 1;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.k-correct {
+  fill: var(--k-correct);
+  background: var(--k-correct);
+}
+.k-flawed {
+  fill: var(--k-flawed);
+  background: var(--k-flawed);
+}
+.k-wrong {
+  fill: var(--k-wrong);
+  background: var(--k-wrong);
+}
+.k-model {
+  fill: var(--k-model);
+  background: var(--k-model);
+}
+.judge .legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 12px 10px;
+}
+.judge .legend i,
+.judge i.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: 0;
+}
+.judge-table th.num,
+.judge-table td.num {
+  text-align: right;
+}
+.judge-table td.flagged {
+  color: var(--bad);
+  font-weight: 600;
+}
+.judge-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+}
+.judge-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.judge-card.active {
+  border-color: var(--accent);
+}
+.judge-card img {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: #fff;
+}
+.judge-card-body {
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.judge-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+.judge-card-title .task-glyph {
+  font-size: 22px;
+}
+.judge-scores {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.judge-problems {
+  line-height: 1.4;
+}
+.judge-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.judge-card details pre {
+  white-space: pre-wrap;
+  font-size: 11px;
+  max-height: 180px;
+  overflow: auto;
+}
+button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent-2);
+  cursor: pointer;
+  font-size: 12px;
+}
+button.link:hover {
+  text-decoration: underline;
+}
+.run-item.active .run-card {
+  border-color: var(--accent);
+}

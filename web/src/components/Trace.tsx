@@ -138,7 +138,7 @@ function Turn({ e }: { e: ModelEvent }) {
         {e.stop_reason ? ` · stop: ${e.stop_reason}` : ""}
       </div>
       {e.error && <div className="bad-text">{e.error}</div>}
-      {e.text && <p className="said">“{e.text}”</p>}
+      {e.text.trim() && <p className="said">“{e.text.trim()}”</p>}
       {e.reasoning && (
         <details>
           <summary>Thinking ({e.reasoning.length.toLocaleString()} characters)</summary>

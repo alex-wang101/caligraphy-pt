@@ -8,7 +8,7 @@ This repo holds the framework-free core for post-training a VLM to write Chinese
 - frozen data splits;
 - a local viewer.
 
-Training (SFT and GRPO on NeMo RL) runs in the cloud and imports this package. The design, the measured results and the remaining milestones are in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).
+Training runs in the cloud and imports this package. Phase-1 SFT runs on Google Colab with Unsloth, or through Together AI's fine-tuning API, from [notebooks/sft_unsloth_together.ipynb](notebooks/sft_unsloth_together.ipynb); GRPO is planned on NeMo RL. The design, the measured results and the remaining milestones are in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).
 
 ## Setup
 
@@ -73,6 +73,18 @@ Open http://localhost:5173. The page shows each calligraphy-bench task in the �
 - the engine's render of the converter output.
 
 A shared stroke scrubber drives the panels. The page also has per-stroke metrics, and a drawing switcher that shows the scorer's golden scenes. Search finds any Make Me a Hanzi character. `.claude/launch.json` defines both servers.
+
+## Training (phase-1 SFT)
+
+```bash
+uv run python scripts/make_sft.py
+```
+
+`make_sft.py` writes `out/sft/{train,val,viz16}.jsonl`: one chat example per character, the evaluation prompt (`phase1_messages`) plus the converter's answer, and scores the first labels with the reward (about 0.92). The same file feeds both training routes in [notebooks/sft_unsloth_together.ipynb](notebooks/sft_unsloth_together.ipynb):
+- **Unsloth on Colab**: LoRA (rank 32, language layers) on `Qwen3-VL-8B-Instruct`, loss on the answer only, then the reward and a contact sheet on `viz16`; saves the adapter to Drive or the Hub.
+- **Together AI**: upload the JSONL, run a managed LoRA job, deploy a dedicated endpoint, and evaluate it with `scripts/run_agent.py --provider together`.
+
+Open the notebook in Colab from GitHub (File → Open notebook → GitHub) and pick an A100 runtime.
 
 ## Running a model on the dataset
 

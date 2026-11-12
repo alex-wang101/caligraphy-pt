@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, CharData, RenderOpts, Task } from "./api";
+import { JudgePanel } from "./components/Judge";
 import { EnginePanel, ReferencePanel, Show, StrokesPanel } from "./components/Panels";
 import { RunForm } from "./components/RunForm";
 import { ScoreSummary, StrokeTable } from "./components/Scores";
@@ -29,21 +30,51 @@ function describeIds(ids: string): string {
   return `${parts.join(" + ")} · ${IDS_NAMES[op]}`;
 }
 
-const initialKey = () => decodeURIComponent(window.location.hash.slice(1)) || "wxz_6420";
+/** What the page is showing, kept in the URL hash so a refresh (or a shared link) lands on the same place. */
+type Place = { key: string; drawing: string; source: Source; run: string | null; judge: string | null };
+
+const SOURCES: Source[] = ["bench", "normalization", "runs", "judge"];
+
+/** "#<key>?drawing=…&source=…&run=…&judge=…"; a bare "#<key>" (older links) still works. */
+function readPlace(): Place {
+  const [rawKey, query = ""] = window.location.hash.slice(1).split("?");
+  const q = new URLSearchParams(query);
+  let key = "wxz_6420";
+  try {
+    key = decodeURIComponent(rawKey) || key;
+  } catch {
+    /* malformed hash: fall back to the default character */
+  }
+  const source = q.get("source") as Source;
+  return { key, drawing: q.get("drawing") || "converter", source: SOURCES.includes(source) ? source : "bench", run: q.get("run"), judge: q.get("judge") };
+}
+
+function writePlace(p: Place): void {
+  const q = new URLSearchParams();
+  if (p.drawing !== "converter") q.set("drawing", p.drawing);
+  if (p.source !== "bench") q.set("source", p.source);
+  if (p.run) q.set("run", p.run);
+  if (p.judge) q.set("judge", p.judge);
+  const query = q.toString();
+  const hash = `#${encodeURIComponent(p.key)}${query ? `?${query}` : ""}`;
+  if (hash !== window.location.hash) window.history.replaceState(null, "", hash);
+}
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [key, setKey] = useState<string>(initialKey);
+  const [start] = useState(readPlace);
+  const [key, setKey] = useState<string>(start.key);
   const [data, setData] = useState<CharData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [k, setK] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [hovered, setHovered] = useState<number | null>(null);
-  const [opts, setOpts] = useState<RenderOpts>({ drawing: "converter", brush: "disc", size: 512, grid: true });
+  const [opts, setOpts] = useState<RenderOpts>({ drawing: start.drawing, brush: "disc", size: 512, grid: true });
   const [show, setShow] = useState<Show>({ outlines: false, medians: true, numbers: true, ghost: true, pixelated: false });
-  const [source, setSource] = useState<Source>("bench");
-  const [activeRun, setActiveRun] = useState<string | null>(null);
-  const [view, setView] = useState<"character" | "newRun">("character");
+  const [source, setSource] = useState<Source>(start.source);
+  const [activeRun, setActiveRun] = useState<string | null>(start.run);
+  const [activeJudge, setActiveJudge] = useState<string | null>(start.judge);
+  const [view, setView] = useState<"character" | "newRun" | "judge">(start.source === "judge" && start.judge ? "judge" : "character");
 
   const select = (nextKey: string, drawing: string) => {
     setKey(nextKey);
@@ -56,7 +87,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.location.hash = encodeURIComponent(key);
+    writePlace({ key, drawing: opts.drawing, source, run: activeRun, judge: activeJudge });
+  }, [key, opts.drawing, source, activeRun, activeJudge]);
+
+  useEffect(() => {
     setError(null);
     api
       .char(key, opts.drawing, opts.brush)
@@ -130,6 +164,11 @@ export default function App() {
         onNewRun={() => setView("newRun")}
         activeRun={activeRun}
         onActiveRun={setActiveRun}
+        activeJudge={activeJudge}
+        onActiveJudge={(id) => {
+          setActiveJudge(id);
+          setView(id ? "judge" : "character");
+        }}
       />
       <main className="main">
         {view === "newRun" && (
@@ -140,6 +179,7 @@ export default function App() {
             }}
           />
         )}
+        {view === "judge" && activeJudge && <JudgePanel expId={activeJudge} onOpen={select} />}
         {view === "character" && error && <div className="error">{error}</div>}
         {view === "character" && data && (
           <>

@@ -275,7 +275,8 @@ When a child in the decomposition is an unnamed nested subtree, its leaves count
 **Out of scope here:**
 - NeMo Gym environment (dropped).
 - Image spike (M5).
-- SFT (M6) and GRPO (M7) on NeMo RL.
+- SFT (M6): phase-1 SFT now runs on Colab with Unsloth, or as a Together AI fine-tuning job, from `notebooks/sft_unsloth_together.ipynb`. `scripts/make_sft.py` exports the labels (evaluation prompt + converter answer, action frame 1024, `rdp_eps` 2.0; the frame is baked into the labels, and 64 would cost 0.14 of the ceiling). A fine-tuned Together model is served on a dedicated endpoint and evaluated through the `together` provider preset of the harness.
+- GRPO (M7) on NeMo RL.
 - Multi-turn training (M8). The environment side (tools, episodes, traces, evaluation harness) is built: section 3.7.
 - VLM aesthetics judge (M9).
 

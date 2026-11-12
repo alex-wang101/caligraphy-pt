@@ -61,7 +61,11 @@ def test_run_scores_answers_and_never_stores_the_key(tmp_path, monkeypatch):
     assert [r["character"] for r in runs.rollouts(run_id)] == ["永", "國", "心"]
     for f in (tmp_path / run_id).iterdir():
         assert SECRET not in f.read_text()
-    assert runs.list()[0]["id"] == run_id
+    assert runs.list()[0]["id"] == run_id and s["created_at"] <= s["finished_at"]
+    for name, created in (("zz-older", "2020-01-01T00:00:00"), ("aa-newer", "2099-01-01T00:00:00")):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "summary.json").write_text(json.dumps({"id": name, "status": "done", "created_at": created}))
+    assert [r["id"] for r in runs.list()] == ["aa-newer", run_id, "zz-older"]  # newest first, by start time
 
 
 @needs_data

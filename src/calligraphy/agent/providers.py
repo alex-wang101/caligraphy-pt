@@ -128,6 +128,21 @@ PROVIDERS: dict[str, Provider] = {
             ),
         ),
         Provider(
+            id="together",
+            label="Together AI",
+            kind="openai",
+            base_url="https://api.together.xyz/v1",
+            key_env="TOGETHER_API_KEY",
+            model_hint="a serverless model id, or the dedicated-endpoint name of a fine-tuned model",
+            local=False,
+            steps=(
+                "Serves open models and the models fine-tuned with its API (notebooks/sft_unsloth_together.ipynb). "
+                "A fine-tuned model must be deployed on a dedicated endpoint first; use the endpoint's model string here.",
+                "$ export TOGETHER_API_KEY=...",
+                "Or paste it below (kept in memory for this run only).",
+            ),
+        ),
+        Provider(
             id="anthropic",
             label="Anthropic (Claude)",
             kind="anthropic",

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, NormCase, RunDetail, RunSummary, SearchHit, Task } from "../api";
+import { api, JudgeSummary, NormCase, RunDetail, RunSummary, SearchHit, Task } from "../api";
 
-export type Source = "bench" | "normalization" | "runs";
+export type Source = "bench" | "normalization" | "runs" | "judge";
 
 type Props = {
   tasks: Task[];
@@ -13,6 +13,8 @@ type Props = {
   onNewRun: () => void;
   activeRun: string | null;
   onActiveRun: (id: string | null) => void;
+  activeJudge: string | null;
+  onActiveJudge: (id: string | null) => void;
 };
 
 export function Sidebar(props: Props) {
@@ -32,11 +34,13 @@ export function Sidebar(props: Props) {
           <option value="bench">calligraphy-bench (88)</option>
           <option value="normalization">Normalization tests</option>
           <option value="runs">Agent runs</option>
+          <option value="judge">Judge experiments</option>
         </select>
       </label>
       {source === "bench" && <BenchList {...props} />}
       {source === "normalization" && <NormalizationList {...props} />}
       {source === "runs" && <RunsList {...props} />}
+      {source === "judge" && <JudgeList {...props} />}
     </aside>
   );
 }
@@ -271,6 +275,70 @@ function RunsList({ selectedDrawing, onSelect, onNewRun, activeRun, onActiveRun 
   );
 }
 
+function JudgeList({ activeJudge, onActiveJudge }: Props) {
+  const [list, setList] = useState<JudgeSummary[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  // Refreshes while an experiment is still going.
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.judgeList().then((r) => alive && setList(r)).catch((e) => alive && setError(String(e)));
+    load();
+    const id = setInterval(load, 4000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  return (
+    <div className="list">
+      {error && <div className="list-note bad">{error}</div>}
+      <div className="list-head">Judge experiments · {list.length}</div>
+      {list.length === 0 && !error && (
+        <div className="list-note">
+          None yet. Run <code>uv run python scripts/run_judge.py --provider openrouter --model qwen/qwen3.8-27b</code>.
+        </div>
+      )}
+      {list.map((s) => {
+        const rho = s.stats?.spearman;
+        const pct = s.n_total ? (100 * s.n_done) / s.n_total : 0;
+        return (
+          <button key={s.id} className={`run-item${activeJudge === s.id ? " active" : ""}`} onClick={() => onActiveJudge(s.id)}>
+            <div className="run-card">
+              <div className="run-top">
+                <span className="run-model ellipsis">{s.model}</span>
+                <span className={`status ${s.status}`}>{s.status}</span>
+              </div>
+              <div className="muted run-sub ellipsis">
+                {s.provider} · {s.characters}
+              </div>
+              <div className="muted run-sub ellipsis">started {formatTime(s.created_at)}</div>
+              <div className="progress" aria-label={`${s.n_done} of ${s.n_total}`}>
+                <i style={{ width: `${pct}%` }} />
+              </div>
+              <div className="run-stats">
+                <span>
+                  {s.n_done}/{s.n_total}
+                </span>
+                <span>ρ {rho == null ? "–" : rho.toFixed(2)}</span>
+                {s.n_errors > 0 && <span className="bad-text">{s.n_errors} errors</span>}
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** "2026-10-05T09:15:13" -> "Oct 5, 09:15" */
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
 export function RunCard({ s }: { s: RunSummary }) {
   const pct = s.n_total ? (100 * s.n_done) / s.n_total : 0;
   return (
@@ -282,6 +350,9 @@ export function RunCard({ s }: { s: RunSummary }) {
       <div className="muted run-sub ellipsis">
         {s.provider} · {s.dataset_label}
         {s.mode === "tools" ? " · tools" : ""}
+      </div>
+      <div className="muted run-sub ellipsis" title={s.finished_at ? `finished ${formatTime(s.finished_at)}` : undefined}>
+        started {formatTime(s.created_at)}
       </div>
       <div className="progress" aria-label={`${s.n_done} of ${s.n_total}`}>
         <i style={{ width: `${pct}%` }} />
